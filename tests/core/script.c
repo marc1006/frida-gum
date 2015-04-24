@@ -98,7 +98,8 @@ TEST_LIST_BEGIN (script)
   SCRIPT_TESTENTRY (process_modules_can_be_enumerated)
   SCRIPT_TESTENTRY (process_ranges_can_be_enumerated)
   SCRIPT_TESTENTRY (module_exports_can_be_enumerated)
-  SCRIPT_TESTENTRY (module_exports_enumeration_performance)
+  SCRIPT_TESTENTRY (module_exports_performance)
+  SCRIPT_TESTENTRY (module_exports_profile_me)
   SCRIPT_TESTENTRY (module_ranges_can_be_enumerated)
   SCRIPT_TESTENTRY (module_base_address_can_be_found)
   SCRIPT_TESTENTRY (module_export_can_be_found_by_name)
@@ -709,24 +710,86 @@ SCRIPT_TESTCASE (module_exports_can_be_enumerated)
   EXPECT_SEND_MESSAGE_WITH ("\"onComplete\"");
 }
 
-SCRIPT_TESTCASE (module_exports_enumeration_performance)
+SCRIPT_TESTCASE (module_exports_performance)
 {
+  const guint repeats = 10;
   TestScriptMessageItem * item;
-  gint duration;
+  float duration;
 
   COMPILE_AND_LOAD_SCRIPT (
-      "var start = new Date();"
-      "Module.enumerateExports(\"%s\", {"
-        "onMatch: function (exp) {"
-        "},"
-        "onComplete: function () {"
-        "}"
-      "});"
-      "send((new Date()).getTime() - start.getTime());",
-      SYSTEM_MODULE_NAME);
+      "\"use strict\";"
+      "const repeats = %u;\n"
+      "let sum = 0;"
+      "for (let i = 0; i !== repeats; i++) {"
+        "const start = Date.now();"
+        "Module.enumerateExports(\"%s\", {"
+          "onMatch: function (exp) {"
+          "},"
+          "onComplete: function () {"
+          "}"
+        "});"
+        "sum += Date.now() - start;"
+        "gc();"
+      "}"
+      "send(sum / repeats);",
+      repeats, SYSTEM_MODULE_NAME);
   item = test_script_fixture_pop_message (fixture);
-  sscanf (item->message, "{\"type\":\"send\",\"payload\":%d}", &duration);
-  g_print ("<%d ms> ", duration);
+  sscanf (item->message, "{\"type\":\"send\",\"payload\":%f}", &duration);
+  g_print ("<enumerate: %.1f ms>", duration);
+  test_script_message_item_free (item);
+
+  COMPILE_AND_LOAD_SCRIPT (
+      "\"use strict\";"
+      "const repeats = %u;\n"
+      "let sum = 0;"
+      "for (let i = 0; i !== repeats; i++) {"
+        "const start = Date.now();"
+        "Module.snapshotExports(\"%s\");"
+        "sum += Date.now() - start;"
+        "gc();"
+      "}"
+      "send(sum / repeats);",
+      repeats, SYSTEM_MODULE_NAME);
+  item = test_script_fixture_pop_message (fixture);
+  sscanf (item->message, "{\"type\":\"send\",\"payload\":%f}", &duration);
+  g_print (" <snapshot: %.1f ms> ", duration);
+  test_script_message_item_free (item);
+}
+
+SCRIPT_TESTCASE (module_exports_profile_me)
+{
+  const guint repeats = 10;
+  TestScriptMessageItem * item;
+  float duration;
+
+  COMPILE_AND_LOAD_SCRIPT (
+      "\"use strict\";"
+      "const repeats = %u;\n"
+      "let sum = 0;"
+      "for (let i = 0; i !== repeats; i++) {"
+        "const start = Date.now();"
+        "Process.enumerateModules({"
+          "onMatch: function (mod) {"
+            /*
+            "Module.snapshotExports(mod.path);"
+            */
+            "Module.enumerateExports(mod.path, {"
+              "onMatch: function (exp) {"
+              "},"
+              "onComplete: function () {"
+              "}"
+            "});"
+          "},"
+          "onComplete: function () {"
+          "}"
+        "});"
+        "sum += Date.now() - start;"
+      "}"
+      "send(sum / repeats);",
+      repeats, SYSTEM_MODULE_NAME);
+  item = test_script_fixture_pop_message (fixture);
+  sscanf (item->message, "{\"type\":\"send\",\"payload\":%f}", &duration);
+  g_print (" <snapshot: %.1f ms> ", duration);
   test_script_message_item_free (item);
 }
 

@@ -41,6 +41,10 @@ static void gum_script_module_on_enumerate_exports (
     const FunctionCallbackInfo<Value> & info);
 static gboolean gum_script_module_handle_export_match (
     const GumExportDetails * details, gpointer user_data);
+static void gum_script_module_on_snapshot_exports (
+    const FunctionCallbackInfo<Value> & info);
+static gboolean gum_script_module_collect_export (
+    const GumExportDetails * details, gpointer user_data);
 static void gum_script_module_on_enumerate_ranges (
     const FunctionCallbackInfo<Value> & info);
 static gboolean gum_script_module_handle_range_match (
@@ -70,6 +74,9 @@ _gum_script_module_init (GumScriptModule * self,
   Handle<ObjectTemplate> module = ObjectTemplate::New (isolate);
   module->Set (String::NewFromUtf8 (isolate, "enumerateExports"),
       FunctionTemplate::New (isolate, gum_script_module_on_enumerate_exports,
+      data));
+  module->Set (String::NewFromUtf8 (isolate, "snapshotExports"),
+      FunctionTemplate::New (isolate, gum_script_module_on_snapshot_exports,
       data));
   module->Set (String::NewFromUtf8 (isolate, "enumerateRanges"),
       FunctionTemplate::New (isolate, gum_script_module_on_enumerate_ranges,
@@ -232,6 +239,54 @@ gum_script_module_handle_export_match (const GumExportDetails * details,
   }
 
   return proceed;
+}
+
+static void
+gum_script_module_on_snapshot_exports (
+    const FunctionCallbackInfo<Value> & info)
+{
+  Isolate * isolate = info.GetIsolate ();
+
+  Local<Value> name_val = info[0];
+  if (!name_val->IsString ())
+  {
+    isolate->ThrowException (Exception::TypeError (String::NewFromUtf8 (
+        isolate, "Module.snapshotExports: first argument must be "
+        "a string specifying a module name whose exports to snapshot")));
+    return;
+  }
+  String::Utf8Value name_str (name_val);
+
+  GString * json = g_string_new ("[");
+  gum_module_enumerate_exports (*name_str,
+      gum_script_module_collect_export, json);
+  g_string_append_c (json, ']');
+
+  Local<String> result = String::NewFromOneByte (isolate,
+      reinterpret_cast<const uint8_t *> (g_string_free (json, FALSE)),
+      NewStringType::kNormal, json->len).ToLocalChecked ();
+  info.GetReturnValue ().Set (result);
+}
+
+static gboolean
+gum_script_module_collect_export (const GumExportDetails * details,
+                                  gpointer user_data)
+{
+  GString * str = static_cast<GString *> (user_data);
+
+  if (str->len > 1)
+    g_string_append_c (str, ',');
+  g_string_append_printf (str,
+      "{"
+          "\"type\":\"%s\","
+          "\"name\":\"%s\","
+          "\"address\":\"0x%" G_GINT64_MODIFIER "x\""
+      "}",
+      (details->type == GUM_EXPORT_FUNCTION) ? "function" : "variable",
+      details->name,
+      details->address);
+
+  return TRUE;
 }
 
 static void
