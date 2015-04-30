@@ -390,17 +390,10 @@ dvmDumpClass(cls, 1);```
                     fieldHandles.push(fieldHandle);
                     env.deleteLocalRef(field);
 
-                    var jsOverloads;
-                    if (jsFields.hasOwnProperty(jsName)) {
-                        // should not be the case
-                        jsOverloads = jsFields[jsName];
-                    } else {
-                        jsOverloads = [];
-                        jsFields[jsName] = jsOverloads;
-                    }
-                    jsOverloads.push(fieldHandle);
+                    jsFields[jsName] = fieldHandle;
                 }
 
+                // define access to the fields in the class (klass)
                 Object.keys(jsFields).forEach(function (name) {
                     var m = null;
                     Object.defineProperty(klass.prototype, name, {
@@ -416,58 +409,36 @@ dvmDumpClass(cls, 1);```
                 });
             };
 
-            var makeFieldFromOverloads = function (name, overloads, env) {
+            var makeFieldFromOverloads = function (name, handle, env) {
                 var Field = env.javaLangReflectField();
                 var Modifier = env.javaLangReflectModifier();
                 var invokeObjectMethodNoArgs = env.method('pointer', []);
                 var invokeIntMethodNoArgs = env.method('int32', []);
                 var invokeUInt8MethodNoArgs = env.method('uint8', []);
 
-                var fields = overloads.map(function (handle) {
-                    var fieldId = env.fromReflectedField(handle);
-                    var fieldType = invokeObjectMethodNoArgs(env.handle, handle, Field.getGenericType);
-                    var modifiers = invokeIntMethodNoArgs(env.handle, handle, Field.getModifiers);
-                   // var isVarArgs = invokeUInt8MethodNoArgs(env.handle, handle, Field.isVarArgs) ? true : false;
+                var fieldId = env.fromReflectedField(handle);
+                var fieldType = invokeObjectMethodNoArgs(env.handle, handle, Field.getGenericType);
+                var modifiers = invokeIntMethodNoArgs(env.handle, handle, Field.getModifiers);
 
-                    var jsType = (modifiers & Modifier.STATIC) !== 0 ? STATIC_FIELD : INSTANCE_FIELD;
+                // TODO there should be the opportunity to see the modifiers
+                var jsType = (modifiers & Modifier.STATIC) !== 0 ? STATIC_FIELD : INSTANCE_FIELD;
 
-                    var jsFieldType;
+                var jsFieldType;
 
-                    try {
-                        jsFieldType = typeFromClassName(env.getTypeName(fieldType));
-                    } catch (e) {
-                        return null;
-                    } finally {
-                        env.deleteLocalRef(fieldType);
-                    }
+                try {
+                    jsFieldType = typeFromClassName(env.getTypeName(fieldType));
+                } catch (e) {
+                    return null;
+                } finally {
+                    env.deleteLocalRef(fieldType);
+                }
 
-                    /*
-                    try {
-                        var numArgTypes = env.getArrayLength(argTypes);
-                        for (var argTypeIndex = 0; argTypeIndex !== numArgTypes; argTypeIndex++) {
-                            var t = env.getObjectArrayElement(argTypes, argTypeIndex);
-                            try {
-                                var argClassName = (isVarArgs && argTypeIndex === numArgTypes - 1) ? env.getArrayTypeName(t) : env.getTypeName(t);
-                                var argType = typeFromClassName(argClassName);
-                                jsArgTypes.push(argType);
-                            } finally {
-                                env.deleteLocalRef(t);
-                            }
-                        }
-                    } catch (e) {
-                        return null;
-                    } finally {
-                        env.deleteLocalRef(argTypes);
-                    } */
+                var field = makeField(jsType, fieldId, jsFieldType, env);
 
-                    return makeField(jsType, fieldId, jsFieldType, env);
-                }).filter(function (m) {
-                    return m !== null;
-                });
+                if (field === null)
+                    throw new Error("no supported field");
 
-                if (fields.length === 0)
-                    throw new Error("no supported overloads");
-
+                /*
                 if (name === "valueOf") {
                     var hasDefaultValueOf = fields.some(function implementsDefaultValueOf(m) {
                         return m.type === INSTANCE_METHOD && m.argumentTypes.length === 0;
@@ -507,10 +478,219 @@ dvmDumpClass(cls, 1);```
                         fields.push(defaultValueOf);
                     }
                 }
+                */
 
-                return makeMethodDispatcher(name, fields);
+                return field; //makeMethodDispatcher(name, fields);
             };
 
+            var makeField = function (type, fieldId, fieldType, env) {
+                var targetFieldId = fieldId;
+                var originalFieldId = null;
+
+                var rawFieldType = fieldType.type;
+                var invokeTarget = null;
+                if (type == STATIC_FIELD) {
+                   invokeTarget = env.staticField(rawFieldType);
+                } else if (type == INSTANCE_FIELD) {
+                    invokeTarget = env.field(rawFieldType);
+                } else {
+                    throw new Error("Should not be the case");
+                }
+
+                var frameCapacity = 2;
+                var callArgs = [
+                    "env.handle",
+                    type === INSTANCE_FIELD ? "this.$handle" : "this.$classHandle",
+                    "targetFieldId"
+                ];
+
+                var returnCapture, returnStatements;
+                if (rawFieldType === 'void') {
+                    returnCapture = "";
+                    returnStatements = "env.popLocalFrame(NULL);";
+                    throw new Error("Should not be the case");
+                } else {
+                    if (fieldType.fromJni) {
+                        frameCapacity++;
+                        returnCapture = "var rawResult = ";
+                        returnStatements = "var result = fieldType.fromJni.call(this, rawResult, env);" +
+                        "env.popLocalFrame(NULL);"
+                    } else {
+                        returnCapture = "var result = ";
+                        returnStatements = "env.popLocalFrame(NULL);"
+                    }
+                }
+
+
+                var f = {};
+                Object.defineProperty(f, "value", {
+                    enumerable: true,
+                    get: function () {
+                        eval(
+                    "var env = vm.getEnv();" +
+                    "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
+                        "env.exceptionClear();" +
+                        "throw new Error(\"Out of memory\");" +
+                    "}" +
+                    "try {" +
+                        "synchronizeVtable.call(this, env);" +
+                        returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
+                    "} catch (e) {" +
+                        "env.popLocalFrame(NULL);" +
+                        "throw e;" +
+                    "}" +
+                    "var throwable = env.exceptionOccurred();" +
+                    "if (!throwable.isNull()) {" +
+                        "env.exceptionClear();" +
+                        "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
+                        "var descriptionStr = env.stringFromJni(description);" +
+                        "env.popLocalFrame(NULL);" +
+                        "throw new Error(descriptionStr);" +
+                    "}" +
+                    returnStatements
+                  );
+                        return result;
+                    }.bind(klass),
+                    set: function(val) {
+                        throw new Error("Not yet implemented (set)");
+                    }
+                });
+
+
+                /*
+                eval("var f = function () {" +
+                    "var env = vm.getEnv();" +
+                    "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
+                        "env.exceptionClear();" +
+                        "throw new Error(\"Out of memory\");" +
+                    "}" +
+                    "try {" +
+                        "synchronizeVtable.call(this, env);" +
+                        returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
+                    "} catch (e) {" +
+                        "env.popLocalFrame(NULL);" +
+                        "throw e;" +
+                    "}" +
+                    "var throwable = env.exceptionOccurred();" +
+                    "if (!throwable.isNull()) {" +
+                        "env.exceptionClear();" +
+                        "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
+                        "var descriptionStr = env.stringFromJni(description);" +
+                        "env.popLocalFrame(NULL);" +
+                        "throw new Error(descriptionStr);" +
+                    "}" +
+                    returnStatements +
+                    "return result;" +
+                "}");
+                */
+
+                Object.defineProperty(f, 'holder', {
+                    enumerable: true,
+                    value: klass
+                });
+
+                var implementation = null;
+                var synchronizeVtable = function (env) {
+                    return;
+                   /* if (originalFieldId === null) {
+                        return; // nothing to do – implementation hasn't been replaced
+                    }
+
+                    var thread = Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
+                    var objectPtr = api.dvmDecodeIndirectRef(thread, this.$handle);
+                    var classObject = Memory.readPointer(objectPtr.add(OBJECT_OFFSET_CLAZZ));
+                    var key = classObject.toString(16);
+                    var entry = patchedClasses[key];
+                    if (!entry) {
+                        var vtablePtr = classObject.add(CLASS_OBJECT_OFFSET_VTABLE);
+                        var vtableCountPtr = classObject.add(CLASS_OBJECT_OFFSET_VTABLE_COUNT);
+                        var vtable = Memory.readPointer(vtablePtr);
+                        var vtableCount = Memory.readS32(vtableCountPtr);
+
+                        var vtableSize = vtableCount * pointerSize;
+                        var shadowVtable = Memory.alloc(2 * vtableSize);
+                        Memory.copy(shadowVtable, vtable, vtableSize);
+                        Memory.writePointer(vtablePtr, shadowVtable);
+
+                        entry = {
+                            classObject: classObject,
+                            vtablePtr: vtablePtr,
+                            vtableCountPtr: vtableCountPtr,
+                            vtable: vtable,
+                            vtableCount: vtableCount,
+                            shadowVtable: shadowVtable,
+                            shadowVtableCount: vtableCount,
+                            targetMethods: {}
+                        };
+                        patchedClasses[key] = entry;
+                    }
+
+                    key = fieldId.toString(16);
+                    var method = entry.targetMethods[key];
+                    if (!method) {
+                        var methodIndex = entry.shadowVtableCount++;
+                        Memory.writePointer(entry.shadowVtable.add(methodIndex * pointerSize), targetMethodId);
+                        Memory.writeU16(targetMethodId.add(METHOD_OFFSET_METHOD_INDEX), methodIndex);
+                        Memory.writeS32(entry.vtableCountPtr, entry.shadowVtableCount);
+
+                        entry.targetMethods[key] = f;
+                    }
+                    */
+                };
+
+                /*
+                Object.defineProperty(f, 'implementation', {
+                    enumerable: true,
+                    get: function () {
+                        return implementation;
+                    },
+                    set: function (fn) {
+                        if (fn === null && originalFieldId === null) {
+                            return;
+                        }
+
+                        if (originalFieldId === null) {
+                            originalFieldId = Memory.dup(fieldId, METHOD_SIZE);
+                            targetMethodId = Memory.dup(fieldId, METHOD_SIZE);
+                        }
+
+                        if (fn !== null) {
+                            implementation = implement(f, fn);
+
+                            var argsSize = argTypes.reduce(function (acc, t) { return acc + t.size; }, 0);
+                            if (type === INSTANCE_METHOD) {
+                                argsSize++;
+                            }
+
+                            // make method native
+                            var accessFlags = Memory.readU32(fieldId.add(METHOD_OFFSET_ACCESS_FLAGS)) | 0x0100;
+                            var registersSize = argsSize;
+                            var outsSize = 0;
+                            var insSize = argsSize;
+                            // parse method arguments
+                            var jniArgInfo = 0x80000000;
+
+
+                            Memory.writeU32(fieldId.add(METHOD_OFFSET_ACCESS_FLAGS), accessFlags);
+                            Memory.writeU16(fieldId.add(METHOD_OFFSET_REGISTERS_SIZE), registersSize);
+                            Memory.writeU16(fieldId.add(METHOD_OFFSET_OUTS_SIZE), outsSize);
+                            Memory.writeU16(fieldId.add(METHOD_OFFSET_INS_SIZE), insSize);
+                            Memory.writeU32(fieldId.add(METHOD_OFFSET_JNI_ARG_INFO), jniArgInfo);
+
+                            api.dvmUseJNIBridge(fieldId, implementation);
+                        } else {
+                            Memory.copy(fieldId, originalFieldId, METHOD_SIZE);
+                        }
+                    }
+                });
+                */
+                Object.defineProperty(f, 'fieldType', {
+                    enumerable: true,
+                    value: fieldType
+                });
+
+                return f;
+            };
 
             var addMethods = function () {
                 var invokeObjectMethodNoArgs = env.method('pointer', []);
@@ -807,7 +987,7 @@ dvmDumpClass(cls, 1);```
                     }
                     return argVariableNames[i];
                 }));
-                var returnCapture, returnStatement;
+                var returnCapture, returnStatements;
                 if (rawRetType === 'void') {
                     returnCapture = "";
                     returnStatements = "env.popLocalFrame(NULL);";
@@ -977,183 +1157,6 @@ dvmDumpClass(cls, 1);```
 
                 return f;
             };
-
-            var makeField = function (type, fieldId, fieldType, env) {
-                var targetFieldId = fieldId;
-                var originalFieldId = null;
-
-                var rawFieldType = fieldType.type;
-                var invokeTarget = null;
-                if (type == STATIC_FIELD) {
-                   invokeTarget = env.staticField(rawFieldType);
-                } else if (type == INSTANCE_FIELD) {
-                    invokeTarget = env.field(rawFieldType);
-                } else {
-                    throw new Error("Should not be the case");
-                }
-
-                var frameCapacity = 2;
-                var callArgs = [
-                    "env.handle",
-                    type === INSTANCE_FIELD ? "this.$handle" : "this.$classHandle",
-                    "targetFieldId"
-                ];
-
-                var returnCapture, returnStatement;
-                if (rawRetType === 'void') {
-                    returnCapture = "";
-                    returnStatements = "env.popLocalFrame(NULL);";
-                } else {
-                    if (fieldType.fromJni) {
-                        frameCapacity++;
-                        returnCapture = "var rawResult = ";
-                        returnStatements = "var result = fieldType.fromJni.call(this, rawResult, env);" +
-                        "env.popLocalFrame(NULL);" +
-                        "return result;";
-                    } else {
-                        returnCapture = "var result = ";
-                        returnStatements = "env.popLocalFrame(NULL);" +
-                        "return result;";
-                    }
-                }
-
-                eval("var f = function () {" +
-                    "var env = vm.getEnv();" +
-                    "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
-                        "env.exceptionClear();" +
-                        "throw new Error(\"Out of memory\");" +
-                    "}" +
-                    "try {" +
-                        "synchronizeVtable.call(this, env);" +
-                        returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
-                    "} catch (e) {" +
-                        "env.popLocalFrame(NULL);" +
-                        "throw e;" +
-                    "}" +
-                    "var throwable = env.exceptionOccurred();" +
-                    "if (!throwable.isNull()) {" +
-                        "env.exceptionClear();" +
-                        "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
-                        "var descriptionStr = env.stringFromJni(description);" +
-                        "env.popLocalFrame(NULL);" +
-                        "throw new Error(descriptionStr);" +
-                    "}" +
-                    returnStatements +
-                "}");
-
-                Object.defineProperty(f, 'holder', {
-                    enumerable: true,
-                    value: klass
-                });
-
-                Object.defineProperty(f, 'type', {
-                    enumerable: true,
-                    value: fieldType
-                });
-
-                var implementation = null;
-                var synchronizeVtable = function (env) {
-                    return;
-                   /* if (originalFieldId === null) {
-                        return; // nothing to do – implementation hasn't been replaced
-                    }
-
-                    var thread = Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
-                    var objectPtr = api.dvmDecodeIndirectRef(thread, this.$handle);
-                    var classObject = Memory.readPointer(objectPtr.add(OBJECT_OFFSET_CLAZZ));
-                    var key = classObject.toString(16);
-                    var entry = patchedClasses[key];
-                    if (!entry) {
-                        var vtablePtr = classObject.add(CLASS_OBJECT_OFFSET_VTABLE);
-                        var vtableCountPtr = classObject.add(CLASS_OBJECT_OFFSET_VTABLE_COUNT);
-                        var vtable = Memory.readPointer(vtablePtr);
-                        var vtableCount = Memory.readS32(vtableCountPtr);
-
-                        var vtableSize = vtableCount * pointerSize;
-                        var shadowVtable = Memory.alloc(2 * vtableSize);
-                        Memory.copy(shadowVtable, vtable, vtableSize);
-                        Memory.writePointer(vtablePtr, shadowVtable);
-
-                        entry = {
-                            classObject: classObject,
-                            vtablePtr: vtablePtr,
-                            vtableCountPtr: vtableCountPtr,
-                            vtable: vtable,
-                            vtableCount: vtableCount,
-                            shadowVtable: shadowVtable,
-                            shadowVtableCount: vtableCount,
-                            targetMethods: {}
-                        };
-                        patchedClasses[key] = entry;
-                    }
-
-                    key = fieldId.toString(16);
-                    var method = entry.targetMethods[key];
-                    if (!method) {
-                        var methodIndex = entry.shadowVtableCount++;
-                        Memory.writePointer(entry.shadowVtable.add(methodIndex * pointerSize), targetMethodId);
-                        Memory.writeU16(targetMethodId.add(METHOD_OFFSET_METHOD_INDEX), methodIndex);
-                        Memory.writeS32(entry.vtableCountPtr, entry.shadowVtableCount);
-
-                        entry.targetMethods[key] = f;
-                    }
-                    */
-                };
-
-                /*
-                Object.defineProperty(f, 'implementation', {
-                    enumerable: true,
-                    get: function () {
-                        return implementation;
-                    },
-                    set: function (fn) {
-                        if (fn === null && originalFieldId === null) {
-                            return;
-                        }
-
-                        if (originalFieldId === null) {
-                            originalFieldId = Memory.dup(fieldId, METHOD_SIZE);
-                            targetMethodId = Memory.dup(fieldId, METHOD_SIZE);
-                        }
-
-                        if (fn !== null) {
-                            implementation = implement(f, fn);
-
-                            var argsSize = argTypes.reduce(function (acc, t) { return acc + t.size; }, 0);
-                            if (type === INSTANCE_METHOD) {
-                                argsSize++;
-                            }
-
-                            // make method native
-                            var accessFlags = Memory.readU32(fieldId.add(METHOD_OFFSET_ACCESS_FLAGS)) | 0x0100;
-                            var registersSize = argsSize;
-                            var outsSize = 0;
-                            var insSize = argsSize;
-                            // parse method arguments
-                            var jniArgInfo = 0x80000000;
-
-
-                            Memory.writeU32(fieldId.add(METHOD_OFFSET_ACCESS_FLAGS), accessFlags);
-                            Memory.writeU16(fieldId.add(METHOD_OFFSET_REGISTERS_SIZE), registersSize);
-                            Memory.writeU16(fieldId.add(METHOD_OFFSET_OUTS_SIZE), outsSize);
-                            Memory.writeU16(fieldId.add(METHOD_OFFSET_INS_SIZE), insSize);
-                            Memory.writeU32(fieldId.add(METHOD_OFFSET_JNI_ARG_INFO), jniArgInfo);
-
-                            api.dvmUseJNIBridge(fieldId, implementation);
-                        } else {
-                            Memory.copy(fieldId, originalFieldId, METHOD_SIZE);
-                        }
-                    }
-                });
-                */
-                Object.defineProperty(f, 'fieldType', {
-                    enumerable: true,
-                    value: fieldType
-                });
-
-                return f;
-            };
-
 
             if (superKlass !== null) {
                 var Surrogate = function () {
