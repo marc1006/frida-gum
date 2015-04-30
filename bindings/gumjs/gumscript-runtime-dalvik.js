@@ -1,3 +1,54 @@
+/* Reference:
+https://www.mulliner.org/android/feed/mulliner_ddi_30c3.pdf
+
+Load dex files:
+ * dexstuff_loaddex()
+ * dexstuff_defineclass()
+
+Important own functions:
+ * function proxy(offset, retType, argTypes, wrapper) {
+
+How to get proxy offset:
+ * http://osxr.org/android/source/libnativehelper/include/nativehelper/jni.h
+ * http://docs.oracle.com/javase/7/docs/technotes/guides/jni/spec/functions.html for the offset
+
+Methods to use:
+ * findClass(...)
+ * Usage for Static Fields:
+ * PUBLIC: this.getStaticIntField(handle, this.getStaticFieldId(handle, "PUBLIC", "I")),
+
+
+Idea:
+ * Replace Classes
+```args[0].l = “PATH/classes.dex”; // must be a string object 
+cookie = dvm_dalvik_system_DexFile[0](args, &pResult);
+// get class loader
+Method *m = dvmGetCurrentJNIMethod();
+// define class
+u4 args[] = { 
+  “org.mulliner.collin.work”, // class name (string object)
+  m­>clazz­>classLoader,      // class loader
+  cookie                      // use DEX file loaded above  
+};
+dvm_dalvik_system_DexFile[3](args, &pResult);```
+
+ * Example usage
+                    ```cls = dvmFindLoadedClass(“Ljava/lang/String;”);
+                    met = dvmFindVirtualMethodHierByDescriptor(cls, “compareTo”,
+                                  “(Ljava/lang/String;)I”);```
+
+ * Dump list of loaded classes in current VM
+    – Useful to find out which system process runs a specific
+      framework service
+      ```// level  0 = only class names 1 = class details
+          dvmDumpAllClasses(level);
+      ```
+
+ * Dump details of specific class: All methods (incl. signature), fields, etc...
+ ```cls = dvmFindLoadedClass(“Lorg/mulliner/collin/work”);
+dvmDumpClass(cls, 1);```
+*/
+
 (function () {
     var _runtime = null;
     var _api = null;
@@ -9,6 +60,10 @@
     var CONSTRUCTOR_METHOD = 1;
     var STATIC_METHOD = 2;
     var INSTANCE_METHOD = 3;
+
+    // field
+    var STATIC_FIELD = 1;
+    var NORMAL_FIELD = 2;
 
     // TODO: 64-bit
     var JNI_ENV_OFFSET_SELF = 12;
@@ -122,6 +177,17 @@
             return classFactory.cast(obj, C);
         };
 
+        this.isMainThread = function() {
+            if (classFactory.loader === null) {
+                throw new Error("Not allowed outside Dalvik.perform() callback");
+            }
+            var Looper = classFactory.use("android.os.Looper");
+            var mainLooper = Looper.getMainLooper();
+            var myLooper = Looper.myLooper();
+            return false;
+           // return mainLooper.$isSameObject(myLooper);
+        };
+
         initialize.call(this);
     };
 
@@ -228,6 +294,7 @@
                 klass.__name__ = name;
                 klass.__handle__ = env.newGlobalRef(classHandle);
                 klass.__methods__ = [];
+                klass.__fields__ = [];
 
                 var ctor = null;
                 Object.defineProperty(klass.prototype, "$new", {
@@ -255,6 +322,7 @@
                 });
 
                 addMethods();
+                addFields();
             };
 
             var dispose = function () {
@@ -304,6 +372,146 @@
                 return makeMethodDispatcher("<init>", jsMethods);
             };
 
+            var addFields = function () {
+                var invokeObjectMethodNoArgs = env.method('pointer', []);
+                var Field_getName = env.javaLangReflectField().getName;
+
+                var fieldHandles = klass.__fields__;
+                var jsFields = {};
+
+                var fields = invokeObjectMethodNoArgs(env.handle, classHandle, env.javaLangClass().getDeclaredFields);
+                var numFields = env.getArrayLength(fields);
+                for (var fieldIndex = 0; fieldIndex !== numFields; fieldIndex++) {
+                    var field = env.getObjectArrayElement(fields, fieldIndex);
+                    var name = invokeObjectMethodNoArgs(env.handle, field, Field_getName);
+                    var jsName = env.stringFromJni(name);
+                    env.deleteLocalRef(name);
+                    var fieldHandle = env.newGlobalRef(field);
+                    fieldHandles.push(fieldHandle);
+                    env.deleteLocalRef(field);
+
+                    var jsOverloads;
+                    if (jsFields.hasOwnProperty(jsName)) {
+                        // should not be the case
+                        jsOverloads = jsFields[jsName];
+                    } else {
+                        jsOverloads = [];
+                        jsFields[jsName] = jsOverloads;
+                    }
+                    jsOverloads.push(fieldHandle);
+                }
+
+                Object.keys(jsFields).forEach(function (name) {
+                    var m = null;
+                    Object.defineProperty(klass.prototype, name, {
+                        get: function () {
+                            if (m === null) {
+                                vm.perform(function () {
+                                    m = makeFieldFromOverloads(name, jsFields[name], vm.getEnv());
+                                });
+                            }
+                            return m;
+                        }
+                    });
+                });
+            };
+
+            var makeFieldFromOverloads = function (name, overloads, env) {
+                var Field = env.javaLangReflectField();
+                var Modifier = env.javaLangReflectModifier();
+                var invokeObjectMethodNoArgs = env.method('pointer', []);
+                var invokeIntMethodNoArgs = env.method('int32', []);
+                var invokeUInt8MethodNoArgs = env.method('uint8', []);
+
+                var fields = overloads.map(function (handle) {
+                    var fieldId = env.fromReflectedField(handle);
+                    var fieldType = invokeObjectMethodNoArgs(env.handle, handle, Field.getGenericType);
+                    var modifiers = invokeIntMethodNoArgs(env.handle, handle, Field.getModifiers);
+                   // var isVarArgs = invokeUInt8MethodNoArgs(env.handle, handle, Field.isVarArgs) ? true : false;
+
+                    var jsType = (modifiers & Modifier.STATIC) !== 0 ? STATIC_FIELD : NORMAL_FIELD;
+
+                    var jsFieldType;
+
+                    try {
+                        jsFieldType = typeFromClassName(env.getTypeName(fieldType));
+                    } catch (e) {
+                        return null;
+                    } finally {
+                        env.deleteLocalRef(fieldType);
+                    }
+
+                    /*
+                    try {
+                        var numArgTypes = env.getArrayLength(argTypes);
+                        for (var argTypeIndex = 0; argTypeIndex !== numArgTypes; argTypeIndex++) {
+                            var t = env.getObjectArrayElement(argTypes, argTypeIndex);
+                            try {
+                                var argClassName = (isVarArgs && argTypeIndex === numArgTypes - 1) ? env.getArrayTypeName(t) : env.getTypeName(t);
+                                var argType = typeFromClassName(argClassName);
+                                jsArgTypes.push(argType);
+                            } finally {
+                                env.deleteLocalRef(t);
+                            }
+                        }
+                    } catch (e) {
+                        return null;
+                    } finally {
+                        env.deleteLocalRef(argTypes);
+                    } */
+
+                    return makeField(jsType, fieldId, jsFieldType, env);
+                }).filter(function (m) {
+                    return m !== null;
+                });
+
+                if (fields.length === 0)
+                    throw new Error("no supported overloads");
+
+                if (name === "valueOf") {
+                    var hasDefaultValueOf = fields.some(function implementsDefaultValueOf(m) {
+                        return m.type === INSTANCE_METHOD && m.argumentTypes.length === 0;
+                    });
+                    if (!hasDefaultValueOf) {
+                        var defaultValueOf = function defaultValueOf() {
+                            return this;
+                        };
+
+                        Object.defineProperty(defaultValueOf, 'holder', {
+                            enumerable: true,
+                            value: klass
+                        });
+
+                        Object.defineProperty(defaultValueOf, 'type', {
+                            enumerable: true,
+                            value: INSTANCE_METHOD
+                        });
+
+                        Object.defineProperty(defaultValueOf, 'returnType', {
+                            enumerable: true,
+                            value: typeFromClassName('int')
+                        });
+
+                        Object.defineProperty(defaultValueOf, 'argumentTypes', {
+                            enumerable: true,
+                            value: []
+                        });
+
+                        Object.defineProperty(defaultValueOf, 'canInvokeWith', {
+                            enumerable: true,
+                            value: function (args) {
+                                return args.length === 0;
+                            }
+                        });
+
+                        fields.push(defaultValueOf);
+                    }
+                }
+
+                return makeMethodDispatcher(name, fields);
+            };
+
+
             var addMethods = function () {
                 var invokeObjectMethodNoArgs = env.method('pointer', []);
                 var Method_getName = env.javaLangReflectMethod().getName;
@@ -345,7 +553,7 @@
                         }
                     });
                 });
-            }
+            };
 
             var makeMethodFromOverloads = function (name, overloads, env) {
                 var Method = env.javaLangReflectMethod();
@@ -657,8 +865,8 @@
                     }
 
                     var thread = Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
-                    var object = api.dvmDecodeIndirectRef(thread, this.$handle);
-                    var classObject = Memory.readPointer(object.add(OBJECT_OFFSET_CLAZZ));
+                    var objectPtr = api.dvmDecodeIndirectRef(thread, this.$handle);
+                    var classObject = Memory.readPointer(objectPtr.add(OBJECT_OFFSET_CLAZZ));
                     var key = classObject.toString(16);
                     var entry = patchedClasses[key];
                     if (!entry) {
@@ -719,11 +927,17 @@
                                 argsSize++;
                             }
 
+                            // make method native
                             var accessFlags = Memory.readU32(methodId.add(METHOD_OFFSET_ACCESS_FLAGS)) | 0x0100;
                             var registersSize = argsSize;
                             var outsSize = 0;
                             var insSize = argsSize;
+                            // parse method arguments
                             var jniArgInfo = 0x80000000;
+                            /*
+                            insSize and registersSize are set to a specific value (next slides)
+                            insns is saved for calling original function (next slides)
+                             */
 
                             Memory.writeU32(methodId.add(METHOD_OFFSET_ACCESS_FLAGS), accessFlags);
                             Memory.writeU16(methodId.add(METHOD_OFFSET_REGISTERS_SIZE), registersSize);
@@ -763,6 +977,185 @@
 
                 return f;
             };
+
+            var makeField = function (type, fieldId, fieldType, env) {
+                var targetFieldId = fieldId;
+                var originalMethodId = null;
+
+                var rawFieldType = fieldType.type;
+                var invokeTarget = null;
+                if (type == STATIC_FIELD) {
+                   invokeTarget = env.staticField(rawFieldType);
+                } else if (type == NORMAL_FIELD) {
+                    invokeTarget = env.field(rawFieldType);
+                }
+
+                var frameCapacity = 2;
+                var callArgs = [
+                    "env.handle",
+                    type === INSTANCE_METHOD ? "this.$handle" : "this.$classHandle",
+                    "targetFieldId"
+                ];
+
+                var returnCapture, returnStatement;
+
+
+                if (fieldType.fromJni) {
+                    frameCapacity++;
+                    returnCapture = "var rawResult = ";
+                    returnStatements = "var result = fieldType.fromJni.call(this, rawResult, env);" +
+                        "env.popLocalFrame(NULL);" +
+                        "return result;";
+                } else {
+                    returnCapture = "var result = ";
+                    returnStatements = "env.popLocalFrame(NULL);" +
+                        "return result;";
+                }
+
+                var f = function () {
+                    "use strict";
+                    var rawResult = false;
+                };
+
+
+                eval("var f = function () {" +
+                    "var env = vm.getEnv();" +
+                    "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
+                        "env.exceptionClear();" +
+                        "throw new Error(\"Out of memory\");" +
+                    "}" +
+                    "try {" +
+                        "synchronizeVtable.call(this, env);" +
+                        returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
+                    "} catch (e) {" +
+                        "env.popLocalFrame(NULL);" +
+                        "throw e;" +
+                    "}" +
+                    "var throwable = env.exceptionOccurred();" +
+                    "if (!throwable.isNull()) {" +
+                        "env.exceptionClear();" +
+                        "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
+                        "var descriptionStr = env.stringFromJni(description);" +
+                        "env.popLocalFrame(NULL);" +
+                        "throw new Error(descriptionStr);" +
+                    "}" +
+                    returnStatements +
+                "}");
+
+                Object.defineProperty(f, 'holder', {
+                    enumerable: true,
+                    value: klass
+                });
+
+                Object.defineProperty(f, 'type', {
+                    enumerable: true,
+                    value: type
+                });
+
+
+                var implementation = null;
+                var synchronizeVtable = function (env) {
+                    return;
+                   /* if (originalMethodId === null) {
+                        return; // nothing to do – implementation hasn't been replaced
+                    }
+
+                    var thread = Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
+                    var objectPtr = api.dvmDecodeIndirectRef(thread, this.$handle);
+                    var classObject = Memory.readPointer(objectPtr.add(OBJECT_OFFSET_CLAZZ));
+                    var key = classObject.toString(16);
+                    var entry = patchedClasses[key];
+                    if (!entry) {
+                        var vtablePtr = classObject.add(CLASS_OBJECT_OFFSET_VTABLE);
+                        var vtableCountPtr = classObject.add(CLASS_OBJECT_OFFSET_VTABLE_COUNT);
+                        var vtable = Memory.readPointer(vtablePtr);
+                        var vtableCount = Memory.readS32(vtableCountPtr);
+
+                        var vtableSize = vtableCount * pointerSize;
+                        var shadowVtable = Memory.alloc(2 * vtableSize);
+                        Memory.copy(shadowVtable, vtable, vtableSize);
+                        Memory.writePointer(vtablePtr, shadowVtable);
+
+                        entry = {
+                            classObject: classObject,
+                            vtablePtr: vtablePtr,
+                            vtableCountPtr: vtableCountPtr,
+                            vtable: vtable,
+                            vtableCount: vtableCount,
+                            shadowVtable: shadowVtable,
+                            shadowVtableCount: vtableCount,
+                            targetMethods: {}
+                        };
+                        patchedClasses[key] = entry;
+                    }
+
+                    key = fieldId.toString(16);
+                    var method = entry.targetMethods[key];
+                    if (!method) {
+                        var methodIndex = entry.shadowVtableCount++;
+                        Memory.writePointer(entry.shadowVtable.add(methodIndex * pointerSize), targetMethodId);
+                        Memory.writeU16(targetMethodId.add(METHOD_OFFSET_METHOD_INDEX), methodIndex);
+                        Memory.writeS32(entry.vtableCountPtr, entry.shadowVtableCount);
+
+                        entry.targetMethods[key] = f;
+                    }
+                    */
+                };
+
+                /*
+                Object.defineProperty(f, 'implementation', {
+                    enumerable: true,
+                    get: function () {
+                        return implementation;
+                    },
+                    set: function (fn) {
+                        if (fn === null && originalMethodId === null) {
+                            return;
+                        }
+
+                        if (originalMethodId === null) {
+                            originalMethodId = Memory.dup(fieldId, METHOD_SIZE);
+                            targetMethodId = Memory.dup(fieldId, METHOD_SIZE);
+                        }
+
+                        if (fn !== null) {
+                            implementation = implement(f, fn);
+
+                            var argsSize = argTypes.reduce(function (acc, t) { return acc + t.size; }, 0);
+                            if (type === INSTANCE_METHOD) {
+                                argsSize++;
+                            }
+
+                            // make method native
+                            var accessFlags = Memory.readU32(fieldId.add(METHOD_OFFSET_ACCESS_FLAGS)) | 0x0100;
+                            var registersSize = argsSize;
+                            var outsSize = 0;
+                            var insSize = argsSize;
+                            // parse method arguments
+                            var jniArgInfo = 0x80000000;
+
+
+                            Memory.writeU32(fieldId.add(METHOD_OFFSET_ACCESS_FLAGS), accessFlags);
+                            Memory.writeU16(fieldId.add(METHOD_OFFSET_REGISTERS_SIZE), registersSize);
+                            Memory.writeU16(fieldId.add(METHOD_OFFSET_OUTS_SIZE), outsSize);
+                            Memory.writeU16(fieldId.add(METHOD_OFFSET_INS_SIZE), insSize);
+                            Memory.writeU32(fieldId.add(METHOD_OFFSET_JNI_ARG_INFO), jniArgInfo);
+
+                            api.dvmUseJNIBridge(fieldId, implementation);
+                        } else {
+                            Memory.copy(fieldId, originalMethodId, METHOD_SIZE);
+                        }
+                    }
+                });
+                */
+                Object.defineProperty(f, 'fieldType', {
+                    enumerable: true,
+                    value: fieldType
+                });
+
+                return f;
+            };
+
 
             if (superKlass !== null) {
                 var Surrogate = function () {
@@ -920,6 +1313,7 @@
             return result;
         };
 
+        // http://docs.oracle.com/javase/6/docs/technotes/guides/jni/spec/types.html#wp9502
         var types = {
             'boolean': {
                 type: 'uint8',
@@ -1035,6 +1429,7 @@
                     throw new Error("Not yet implemented ([I)");
                 }
             },
+            // TODO should it not be '[Ljava/lang/String;'?
             '[Ljava.lang.String;': {
                 type: 'pointer',
                 size: 1,
@@ -1238,6 +1633,27 @@
         var CALL_STATIC_DOUBLE_METHOD_OFFSET = 138;
         var CALL_STATIC_VOID_METHOD_OFFSET = 141;
 
+        var GET_OBJECT_FIELD_OFFSET = 95;
+        var GET_BOOLEAN_FIELD_OFFSET = 96;
+        var GET_BYTE_FIELD_OFFSET = 97;
+        var GET_CHAR_FIELD_OFFSET = 98;
+        var GET_SHORT_FIELD_OFFSET = 99;
+        var GET_INT_FIELD_OFFSET = 100;
+        var GET_LONG_FIELD_OFFSET = 101;
+        var GET_FLOAT_FIELD_OFFSET = 102;
+        var GET_DOUBLE_FIELD_OFFSET = 103;
+
+        var GET_STATIC_OBJECT_FIELD_OFFSET = 145;
+        var GET_STATIC_BOOLEAN_FIELD_OFFSET = 146;
+        var GET_STATIC_BYTE_FIELD_OFFSET = 147;
+        var GET_STATIC_CHAR_FIELD_OFFSET = 148;
+        var GET_STATIC_SHORT_FIELD_OFFSET = 149;
+        var GET_STATIC_INT_FIELD_OFFSET = 150;
+        var GET_STATIC_LONG_FIELD_OFFSET = 151;
+        var GET_STATIC_FLOAT_FIELD_OFFSET = 152;
+        var GET_STATIC_DOUBLE_FIELD_OFFSET = 153;
+        var GET_STATIC_VOID_FIELD_OFFSET = 154;
+
         var callMethodOffset = {
             'pointer': CALL_OBJECT_METHOD_OFFSET,
             'uint8': CALL_BOOLEAN_METHOD_OFFSET,
@@ -1263,6 +1679,31 @@
             'double': CALL_STATIC_DOUBLE_METHOD_OFFSET,
             'void': CALL_STATIC_VOID_METHOD_OFFSET
         };
+
+        var getFieldOffset = {
+            'pointer': GET_OBJECT_FIELD_OFFSET,
+            'uint8': GET_BOOLEAN_FIELD_OFFSET,
+            'int8': GET_BYTE_FIELD_OFFSET,
+            'uint16': GET_CHAR_FIELD_OFFSET,
+            'int16': GET_SHORT_FIELD_OFFSET,
+            'int32': GET_INT_FIELD_OFFSET,
+            'int64': GET_LONG_FIELD_OFFSET,
+            'float': GET_FLOAT_FIELD_OFFSET,
+            'double': GET_DOUBLE_FIELD_OFFSET
+        };
+
+        var getStaticFieldOffset = {
+            'pointer': GET_STATIC_OBJECT_FIELD_OFFSET,
+            'uint8': GET_STATIC_BOOLEAN_FIELD_OFFSET,
+            'int8': GET_STATIC_BYTE_FIELD_OFFSET,
+            'uint16': GET_STATIC_CHAR_FIELD_OFFSET,
+            'int16': GET_STATIC_SHORT_FIELD_OFFSET,
+            'int32': GET_STATIC_INT_FIELD_OFFSET,
+            'int64': GET_STATIC_LONG_FIELD_OFFSET,
+            'float': GET_STATIC_FLOAT_FIELD_OFFSET,
+            'double': GET_STATIC_DOUBLE_FIELD_OFFSET
+        };
+
 
         var cachedVtable = null;
         var globalRefs = [];
@@ -1310,6 +1751,10 @@
         });
 
         Env.prototype.fromReflectedMethod = proxy(7, 'pointer', ['pointer', 'pointer'], function (impl, method) {
+            return impl(this.handle, method);
+        });
+
+        Env.prototype.fromReflectedField = proxy(8, 'pointer', ['pointer', 'pointer'], function (impl, method) {
             return impl(this.handle, method);
         });
 
@@ -1369,9 +1814,33 @@
             return impl(this.handle, klass, Memory.allocUtf8String(name), Memory.allocUtf8String(sig));
         });
 
+        /*
+         jobject     (*GetObjectField)(JNIEnv*, jobject, jfieldID);
+         jboolean    (*GetBooleanField)(JNIEnv*, jobject, jfieldID);
+         jbyte       (*GetByteField)(JNIEnv*, jobject, jfieldID);
+         jchar       (*GetCharField)(JNIEnv*, jobject, jfieldID);
+         jshort      (*GetShortField)(JNIEnv*, jobject, jfieldID);
+         jint        (*GetIntField)(JNIEnv*, jobject, jfieldID);
+         */
+
         Env.prototype.getIntField = proxy(100, 'int32', ['pointer', 'pointer', 'pointer'], function (impl, obj, fieldId) {
             return impl(this.handle, obj, fieldId);
         });
+
+        /*
+        jlong       (*GetLongField)(JNIEnv*, jobject, jfieldID);
+        jfloat      (*GetFloatField)(JNIEnv*, jobject, jfieldID);
+        jdouble     (*GetDoubleField)(JNIEnv*, jobject, jfieldID);
+        void        (*SetObjectField)(JNIEnv*, jobject, jfieldID, jobject);
+        void        (*SetBooleanField)(JNIEnv*, jobject, jfieldID, jboolean);
+        void        (*SetByteField)(JNIEnv*, jobject, jfieldID, jbyte);
+        void        (*SetCharField)(JNIEnv*, jobject, jfieldID, jchar);
+        void        (*SetShortField)(JNIEnv*, jobject, jfieldID, jshort);
+        void        (*SetIntField)(JNIEnv*, jobject, jfieldID, jint);
+        void        (*SetLongField)(JNIEnv*, jobject, jfieldID, jlong);
+        void        (*SetFloatField)(JNIEnv*, jobject, jfieldID, jfloat);
+        void        (*SetDoubleField)(JNIEnv*, jobject, jfieldID, jdouble);
+        */
 
         Env.prototype.getStaticMethodId = proxy(113, 'pointer', ['pointer', 'pointer', 'pointer', 'pointer'], function (impl, klass, name, sig) {
             return impl(this.handle, klass, Memory.allocUtf8String(name), Memory.allocUtf8String(sig));
@@ -1443,6 +1912,20 @@
             return method(offset, retType, argTypes);
         };
 
+        Env.prototype.field = function (fieldType) {
+            var offset = getFieldOffset[fieldType];
+            if (offset === undefined)
+                throw new Error("Unsupported type: " + fieldType);
+            return method(offset, fieldType, []);
+        };
+
+        Env.prototype.staticField = function (fieldType) {
+            var offset = getStaticFieldOffset[fieldType];
+            if (offset === undefined)
+                throw new Error("Unsupported type: " + fieldType);
+            return method(offset, fieldType, []);
+        };
+
         var javaLangClass = null;
         Env.prototype.javaLangClass = function () {
             if (javaLangClass === null) {
@@ -1451,7 +1934,8 @@
                     handle: register(this.newGlobalRef(handle)),
                     getName: this.getMethodId(handle, "getName", "()Ljava/lang/String;"),
                     getDeclaredConstructors: this.getMethodId(handle, "getDeclaredConstructors", "()[Ljava/lang/reflect/Constructor;"),
-                    getDeclaredMethods: this.getMethodId(handle, "getDeclaredMethods", "()[Ljava/lang/reflect/Method;")
+                    getDeclaredMethods: this.getMethodId(handle, "getDeclaredMethods", "()[Ljava/lang/reflect/Method;"),
+                    getDeclaredFields: this.getMethodId(handle, "getDeclaredFields", "()[Ljava/lang/reflect/Field;")
                 };
                 this.deleteLocalRef(handle);
             }
@@ -1498,6 +1982,22 @@
             return javaLangReflectMethod;
         };
 
+        var javaLangReflectField = null;
+        Env.prototype.javaLangReflectField = function () {
+            if (javaLangReflectField === null) {
+                var handle = this.findClass("java/lang/reflect/Field");
+                javaLangReflectField = {
+                    getName: this.getMethodId(handle, "getName", "()Ljava/lang/String;"),
+                    getType: this.getMethodId(handle, "getType", "()Ljava/lang/Class;"),
+                    getGenericType: this.getMethodId(handle, "getGenericType", "()Ljava/lang/reflect/Type;"),
+                    getModifiers: this.getMethodId(handle, "getModifiers", "()I"),
+                    toString: this.getMethodId(handle, "toString", '()Ljava/lang/String;')
+                };
+                this.deleteLocalRef(handle);
+            }
+            return javaLangReflectField;
+        };
+
         var javaLangReflectModifier = null;
         Env.prototype.javaLangReflectModifier = function () {
             if (javaLangReflectModifier === null) {
@@ -1506,7 +2006,15 @@
                     PUBLIC: this.getStaticIntField(handle, this.getStaticFieldId(handle, "PUBLIC", "I")),
                     PRIVATE: this.getStaticIntField(handle, this.getStaticFieldId(handle, "PRIVATE", "I")),
                     PROTECTED: this.getStaticIntField(handle, this.getStaticFieldId(handle, "PROTECTED", "I")),
-                    STATIC: this.getStaticIntField(handle, this.getStaticFieldId(handle, "STATIC", "I"))
+                    STATIC: this.getStaticIntField(handle, this.getStaticFieldId(handle, "STATIC", "I")),
+                    FINAL: this.getStaticIntField(handle, this.getStaticFieldId(handle, "FINAL", "I")),
+                    SYNCHRONIZED: this.getStaticIntField(handle, this.getStaticFieldId(handle, "SYNCHRONIZED", "I")),
+                    VOLATILE: this.getStaticIntField(handle, this.getStaticFieldId(handle, "VOLATILE", "I")),
+                    TRANSIENT: this.getStaticIntField(handle, this.getStaticFieldId(handle, "TRANSIENT", "I")),
+                    NATIVE: this.getStaticIntField(handle, this.getStaticFieldId(handle, "NATIVE", "I")),
+                    INTERFACE: this.getStaticIntField(handle, this.getStaticFieldId(handle, "INTERFACE", "I")),
+                    ABSTRACT: this.getStaticIntField(handle, this.getStaticFieldId(handle, "ABSTRACT", "I")),
+                    STRICT: this.getStaticIntField(handle, this.getStaticFieldId(handle, "STRICT", "I"))
                 };
                 this.deleteLocalRef(handle);
             }
@@ -1570,8 +2078,34 @@
             {
                 module: "libdvm.so",
                 functions: {
+                    // Object* dvmDecodeIndirectRef(Thread* self, jobject jobj);
                     "_Z20dvmDecodeIndirectRefP6ThreadP8_jobject": ["dvmDecodeIndirectRef", 'pointer', ['pointer', 'pointer']],
-                    "_Z15dvmUseJNIBridgeP6MethodPv": ["dvmUseJNIBridge", 'void', ['pointer', 'pointer']]
+                     // void dvmUseJNIBridge(Method* method, void* func);
+                    "_Z15dvmUseJNIBridgeP6MethodPv": ["dvmUseJNIBridge", 'void', ['pointer', 'pointer']],
+                    // ClassObject* dvmFindLoadedClass(const char* descriptor);
+                    "_Z18dvmFindLoadedClassPKc": ["dvmFindLoadedClass", 'pointer', ['pointer']],
+                    // ClassObject* dvmFindClass(const char* descriptor, Object* loader); TODO maybe add also dvmFindClassNoInit
+                    "_Z12dvmFindClassPKcP6Object": ["dvmFindClass", 'pointer', ['pointer', 'pointer']],
+                    // Method* dvmFindVirtualMethodHierByDescriptor(const ClassObject* clazz, const char* methodName, const char* descriptor)
+                    "_Z36dvmFindVirtualMethodHierByDescriptorPK11ClassObjectPKcS3_": ["dvmFindVirtualMethodHierByDescriptor", 'pointer', ['pointer', 'pointer', 'pointer']],
+
+                    // Method* dvmFindDirectMethodByDescriptor(const ClassObject* clazz, const char* methodName, const char* descriptor);
+                    "_Z31dvmFindDirectMethodByDescriptorPK11ClassObjectPKcS3_": ["dvmFindDirectMethodByDescriptor", 'pointer', ['pointer', 'pointer', 'pointer']],
+                    // TODO dvm_dalvik_system_DexFile for loading dex files
+                    //"": ["dvm_dalvik_system_DexFile", '', []]
+
+                   /* Retrieve the system (a/k/a application) class loader.
+                    * The caller must call dvmReleaseTrackedAlloc on the result.
+                    * Object* dvmGetSystemClassLoader() */
+                    "_Z23dvmGetSystemClassLoaderv": ["dvmGetSystemClassLoader", 'pointer',[]],
+                    /* Get the method currently being executed by examining the interp stack.
+                     * const Method* dvmGetCurrentJNIMethod(); */
+                    "_Z22dvmGetCurrentJNIMethodv": ["dvmGetCurrentJNIMethod", 'pointer', []],
+                    /* For debugging */
+                    // void dvmDumpAllClasses(int flags);
+                    "_Z17dvmDumpAllClassesi": ["dvmDumpAllClasses", 'void', ['int32']],
+                    // void dvmDumpClass(const ClassObject* clazz, int flags);
+                    "_Z12dvmDumpClassPK11ClassObjecti": ["dvmDumpClass", 'void', ['pointer', 'int32']]
                 },
                 variables: {
                     "gDvmJni": function (address) {
