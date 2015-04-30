@@ -63,7 +63,7 @@ dvmDumpClass(cls, 1);```
 
     // field
     var STATIC_FIELD = 1;
-    var NORMAL_FIELD = 2;
+    var INSTANCE_FIELD = 2;
 
     // TODO: 64-bit
     var JNI_ENV_OFFSET_SELF = 12;
@@ -429,7 +429,7 @@ dvmDumpClass(cls, 1);```
                     var modifiers = invokeIntMethodNoArgs(env.handle, handle, Field.getModifiers);
                    // var isVarArgs = invokeUInt8MethodNoArgs(env.handle, handle, Field.isVarArgs) ? true : false;
 
-                    var jsType = (modifiers & Modifier.STATIC) !== 0 ? STATIC_FIELD : NORMAL_FIELD;
+                    var jsType = (modifiers & Modifier.STATIC) !== 0 ? STATIC_FIELD : INSTANCE_FIELD;
 
                     var jsFieldType;
 
@@ -980,43 +980,42 @@ dvmDumpClass(cls, 1);```
 
             var makeField = function (type, fieldId, fieldType, env) {
                 var targetFieldId = fieldId;
-                var originalMethodId = null;
+                var originalFieldId = null;
 
                 var rawFieldType = fieldType.type;
                 var invokeTarget = null;
                 if (type == STATIC_FIELD) {
                    invokeTarget = env.staticField(rawFieldType);
-                } else if (type == NORMAL_FIELD) {
+                } else if (type == INSTANCE_FIELD) {
                     invokeTarget = env.field(rawFieldType);
+                } else {
+                    throw new Error("Should not be the case");
                 }
 
                 var frameCapacity = 2;
                 var callArgs = [
                     "env.handle",
-                    type === INSTANCE_METHOD ? "this.$handle" : "this.$classHandle",
+                    type === INSTANCE_FIELD ? "this.$handle" : "this.$classHandle",
                     "targetFieldId"
                 ];
 
                 var returnCapture, returnStatement;
-
-
-                if (fieldType.fromJni) {
-                    frameCapacity++;
-                    returnCapture = "var rawResult = ";
-                    returnStatements = "var result = fieldType.fromJni.call(this, rawResult, env);" +
+                if (rawRetType === 'void') {
+                    returnCapture = "";
+                    returnStatements = "env.popLocalFrame(NULL);";
+                } else {
+                    if (fieldType.fromJni) {
+                        frameCapacity++;
+                        returnCapture = "var rawResult = ";
+                        returnStatements = "var result = fieldType.fromJni.call(this, rawResult, env);" +
                         "env.popLocalFrame(NULL);" +
                         "return result;";
-                } else {
-                    returnCapture = "var result = ";
-                    returnStatements = "env.popLocalFrame(NULL);" +
+                    } else {
+                        returnCapture = "var result = ";
+                        returnStatements = "env.popLocalFrame(NULL);" +
                         "return result;";
+                    }
                 }
-
-                var f = function () {
-                    "use strict";
-                    var rawResult = false;
-                };
-
 
                 eval("var f = function () {" +
                     "var env = vm.getEnv();" +
@@ -1049,14 +1048,13 @@ dvmDumpClass(cls, 1);```
 
                 Object.defineProperty(f, 'type', {
                     enumerable: true,
-                    value: type
+                    value: fieldType
                 });
-
 
                 var implementation = null;
                 var synchronizeVtable = function (env) {
                     return;
-                   /* if (originalMethodId === null) {
+                   /* if (originalFieldId === null) {
                         return; // nothing to do – implementation hasn't been replaced
                     }
 
@@ -1109,12 +1107,12 @@ dvmDumpClass(cls, 1);```
                         return implementation;
                     },
                     set: function (fn) {
-                        if (fn === null && originalMethodId === null) {
+                        if (fn === null && originalFieldId === null) {
                             return;
                         }
 
-                        if (originalMethodId === null) {
-                            originalMethodId = Memory.dup(fieldId, METHOD_SIZE);
+                        if (originalFieldId === null) {
+                            originalFieldId = Memory.dup(fieldId, METHOD_SIZE);
                             targetMethodId = Memory.dup(fieldId, METHOD_SIZE);
                         }
 
@@ -1143,7 +1141,7 @@ dvmDumpClass(cls, 1);```
 
                             api.dvmUseJNIBridge(fieldId, implementation);
                         } else {
-                            Memory.copy(fieldId, originalMethodId, METHOD_SIZE);
+                            Memory.copy(fieldId, originalFieldId, METHOD_SIZE);
                         }
                     }
                 });
