@@ -1,3 +1,9 @@
+/*
+* TODO:
+*  - Adjust usage to ```instance.field.value``` and ```instance.field.value = ...```. For now it's ```instance.field()```
+*  - Create setter
+*/
+
 /* Reference:
 https://www.mulliner.org/android/feed/mulliner_ddi_30c3.pdf
 
@@ -6,7 +12,7 @@ Load dex files:
  * dexstuff_defineclass()
 
 Important own functions:
- * function proxy(offset, retType, argTypes, wrapper) {
+ * function proxy(offset, retType, argTypes, wrapper);
 
 How to get proxy offset:
  * http://osxr.org/android/source/libnativehelper/include/nativehelper/jni.h
@@ -15,14 +21,13 @@ How to get proxy offset:
 Methods to use:
  * findClass(...)
  * Usage for Static Fields:
- * PUBLIC: this.getStaticIntField(handle, this.getStaticFieldId(handle, "PUBLIC", "I")),
+    - PUBLIC: this.getStaticIntField(handle, this.getStaticFieldId(handle, "PUBLIC", "I")),
 
-
-Idea:
- * Replace Classes
+Ideas:
+ * Replace classes
 ```args[0].l = “PATH/classes.dex”; // must be a string object 
-cookie = dvm_dalvik_system_DexFile[0](args, &pResult);
-// get class loader
+   cookie = dvm_dalvik_system_DexFile[0](args, &pResult);
+   // get class loader
 Method *m = dvmGetCurrentJNIMethod();
 // define class
 u4 args[] = { 
@@ -33,17 +38,15 @@ u4 args[] = { 
 dvm_dalvik_system_DexFile[3](args, &pResult);```
 
  * Example usage
-                    ```cls = dvmFindLoadedClass(“Ljava/lang/String;”);
-                    met = dvmFindVirtualMethodHierByDescriptor(cls, “compareTo”,
+    ```cls = dvmFindLoadedClass(“Ljava/lang/String;”);
+    met = dvmFindVirtualMethodHierByDescriptor(cls, “compareTo”,
                                   “(Ljava/lang/String;)I”);```
-
  * Dump list of loaded classes in current VM
     – Useful to find out which system process runs a specific
       framework service
       ```// level  0 = only class names 1 = class details
           dvmDumpAllClasses(level);
       ```
-
  * Dump details of specific class: All methods (incl. signature), fields, etc...
  ```cls = dvmFindLoadedClass(“Lorg/mulliner/collin/work”);
 dvmDumpClass(cls, 1);```
@@ -438,48 +441,6 @@ dvmDumpClass(cls, 1);```
                 if (field === null)
                     throw new Error("no supported field");
 
-                /*
-                if (name === "valueOf") {
-                    var hasDefaultValueOf = fields.some(function implementsDefaultValueOf(m) {
-                        return m.type === INSTANCE_METHOD && m.argumentTypes.length === 0;
-                    });
-                    if (!hasDefaultValueOf) {
-                        var defaultValueOf = function defaultValueOf() {
-                            return this;
-                        };
-
-                        Object.defineProperty(defaultValueOf, 'holder', {
-                            enumerable: true,
-                            value: klass
-                        });
-
-                        Object.defineProperty(defaultValueOf, 'type', {
-                            enumerable: true,
-                            value: INSTANCE_METHOD
-                        });
-
-                        Object.defineProperty(defaultValueOf, 'returnType', {
-                            enumerable: true,
-                            value: typeFromClassName('int')
-                        });
-
-                        Object.defineProperty(defaultValueOf, 'argumentTypes', {
-                            enumerable: true,
-                            value: []
-                        });
-
-                        Object.defineProperty(defaultValueOf, 'canInvokeWith', {
-                            enumerable: true,
-                            value: function (args) {
-                                return args.length === 0;
-                            }
-                        });
-
-                        fields.push(defaultValueOf);
-                    }
-                }
-                */
-
                 return field; //makeMethodDispatcher(name, fields);
             };
 
@@ -489,9 +450,9 @@ dvmDumpClass(cls, 1);```
 
                 var rawFieldType = fieldType.type;
                 var invokeTarget = null;
-                if (type == STATIC_FIELD) {
+                if (type === STATIC_FIELD) {
                    invokeTarget = env.staticField(rawFieldType);
-                } else if (type == INSTANCE_FIELD) {
+                } else if (type === INSTANCE_FIELD) {
 
                     invokeTarget = env.field(rawFieldType);
                 } else {
@@ -551,7 +512,7 @@ dvmDumpClass(cls, 1);```
                 */
                  eval("var fu = function () {" +
                     "var env = vm.getEnv();" +
-                              "console.log(Object.keys(this));" +
+                              "console.log('fu' + Object.keys(this));" +
                     "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
                         "env.exceptionClear();" +
                         "throw new Error(\"Out of memory\");" +
@@ -587,10 +548,12 @@ dvmDumpClass(cls, 1);```
                 });
 */
 
-
                 eval("var f = function () {" +
+                    "var isInstance = this.$handle !== null;" +
+                    "if (type === INSTANCE_FIELD && isInstance === false) { " +
+                    "throw new Error(name + ': cannot get instance field without an instance');}" +
                     "var env = vm.getEnv();" +
-                     "console.log(Object.keys(this));" +
+                     "console.log('f' + Object.keys(this));" +
                     "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
                         "env.exceptionClear();" +
                         "throw new Error(\"Out of memory\");" +
@@ -611,13 +574,21 @@ dvmDumpClass(cls, 1);```
                         "throw new Error(descriptionStr);" +
                     "}" +
                     returnStatements +
-                    "return result;" +
                 "}");
-
 
                 Object.defineProperty(f, 'holder', {
                     enumerable: true,
                     value: klass
+                });
+
+                Object.defineProperty(f, 'type', {
+                    enumerable: true,
+                    value: type
+                });
+
+                Object.defineProperty(f, 'fieldType', {
+                    enumerable: true,
+                    value: fieldType
                 });
 
                 var implementation = null;
@@ -668,57 +639,6 @@ dvmDumpClass(cls, 1);```
                     }
                     */
                 };
-
-                /*
-                Object.defineProperty(f, 'implementation', {
-                    enumerable: true,
-                    get: function () {
-                        return implementation;
-                    },
-                    set: function (fn) {
-                        if (fn === null && originalFieldId === null) {
-                            return;
-                        }
-
-                        if (originalFieldId === null) {
-                            originalFieldId = Memory.dup(fieldId, METHOD_SIZE);
-                            targetMethodId = Memory.dup(fieldId, METHOD_SIZE);
-                        }
-
-                        if (fn !== null) {
-                            implementation = implement(f, fn);
-
-                            var argsSize = argTypes.reduce(function (acc, t) { return acc + t.size; }, 0);
-                            if (type === INSTANCE_METHOD) {
-                                argsSize++;
-                            }
-
-                            // make method native
-                            var accessFlags = Memory.readU32(fieldId.add(METHOD_OFFSET_ACCESS_FLAGS)) | 0x0100;
-                            var registersSize = argsSize;
-                            var outsSize = 0;
-                            var insSize = argsSize;
-                            // parse method arguments
-                            var jniArgInfo = 0x80000000;
-
-
-                            Memory.writeU32(fieldId.add(METHOD_OFFSET_ACCESS_FLAGS), accessFlags);
-                            Memory.writeU16(fieldId.add(METHOD_OFFSET_REGISTERS_SIZE), registersSize);
-                            Memory.writeU16(fieldId.add(METHOD_OFFSET_OUTS_SIZE), outsSize);
-                            Memory.writeU16(fieldId.add(METHOD_OFFSET_INS_SIZE), insSize);
-                            Memory.writeU32(fieldId.add(METHOD_OFFSET_JNI_ARG_INFO), jniArgInfo);
-
-                            api.dvmUseJNIBridge(fieldId, implementation);
-                        } else {
-                            Memory.copy(fieldId, originalFieldId, METHOD_SIZE);
-                        }
-                    }
-                });
-                */
-                Object.defineProperty(f, 'fieldType', {
-                    enumerable: true,
-                    value: fieldType
-                });
 
                 return f;
             };
