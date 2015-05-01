@@ -492,6 +492,7 @@ dvmDumpClass(cls, 1);```
                 if (type == STATIC_FIELD) {
                    invokeTarget = env.staticField(rawFieldType);
                 } else if (type == INSTANCE_FIELD) {
+
                     invokeTarget = env.field(rawFieldType);
                 } else {
                     throw new Error("Should not be the case");
@@ -514,51 +515,16 @@ dvmDumpClass(cls, 1);```
                         frameCapacity++;
                         returnCapture = "var rawResult = ";
                         returnStatements = "var result = fieldType.fromJni.call(this, rawResult, env);" +
-                        "env.popLocalFrame(NULL);"
+                        "env.popLocalFrame(NULL);" +
+                        "return result;"
                     } else {
                         returnCapture = "var result = ";
-                        returnStatements = "env.popLocalFrame(NULL);"
+                        returnStatements = "env.popLocalFrame(NULL);" +
+                        "return result;"
                     }
                 }
-
-
-                var f = {};
-                Object.defineProperty(f, "value", {
-                    enumerable: true,
-                    get: function () {
-                        eval(
-                    "var env = vm.getEnv();" +
-                    "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
-                        "env.exceptionClear();" +
-                        "throw new Error(\"Out of memory\");" +
-                    "}" +
-                    "try {" +
-                        "synchronizeVtable.call(this, env);" +
-                        returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
-                    "} catch (e) {" +
-                        "env.popLocalFrame(NULL);" +
-                        "throw e;" +
-                    "}" +
-                    "var throwable = env.exceptionOccurred();" +
-                    "if (!throwable.isNull()) {" +
-                        "env.exceptionClear();" +
-                        "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
-                        "var descriptionStr = env.stringFromJni(description);" +
-                        "env.popLocalFrame(NULL);" +
-                        "throw new Error(descriptionStr);" +
-                    "}" +
-                    returnStatements
-                  );
-                        return result;
-                    }.bind(klass),
-                    set: function(val) {
-                        throw new Error("Not yet implemented (set)");
-                    }
-                });
-
-
-                /*
-                eval("var f = function () {" +
+/*
+                eval("var fmethod = function () {" +
                     "var env = vm.getEnv();" +
                     "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
                         "env.exceptionClear();" +
@@ -583,6 +549,71 @@ dvmDumpClass(cls, 1);```
                     "return result;" +
                 "}");
                 */
+                 eval("var fu = function () {" +
+                    "var env = vm.getEnv();" +
+                              "console.log(Object.keys(this));" +
+                    "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
+                        "env.exceptionClear();" +
+                        "throw new Error(\"Out of memory\");" +
+                    "}" +
+                    "try {" +
+                        "synchronizeVtable.call(this, env);" +
+                        returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
+                    "} catch (e) {" +
+                        "env.popLocalFrame(NULL);" +
+                        "throw e;" +
+                    "}" +
+                    "var throwable = env.exceptionOccurred();" +
+                    "if (!throwable.isNull()) {" +
+                        "env.exceptionClear();" +
+                        "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
+                        "var descriptionStr = env.stringFromJni(description);" +
+                        "env.popLocalFrame(NULL);" +
+                        "throw new Error(descriptionStr);" +
+                    "}" +
+                    returnStatements +
+                    "}");
+
+/*
+                var f = {};
+                Object.defineProperty(f, "value", {
+                    enumerable: true,
+                    get: function () {
+                         fu();
+                    },
+                    set: function(val) {
+                        throw new Error("Not yet implemented (set)");
+                    }
+                });
+*/
+
+
+                eval("var f = function () {" +
+                    "var env = vm.getEnv();" +
+                     "console.log(Object.keys(this));" +
+                    "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
+                        "env.exceptionClear();" +
+                        "throw new Error(\"Out of memory\");" +
+                    "}" +
+                    "try {" +
+                        "synchronizeVtable.call(this, env);" +
+                        returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
+                    "} catch (e) {" +
+                        "env.popLocalFrame(NULL);" +
+                        "throw e;" +
+                    "}" +
+                    "var throwable = env.exceptionOccurred();" +
+                    "if (!throwable.isNull()) {" +
+                        "env.exceptionClear();" +
+                        "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
+                        "var descriptionStr = env.stringFromJni(description);" +
+                        "env.popLocalFrame(NULL);" +
+                        "throw new Error(descriptionStr);" +
+                    "}" +
+                    returnStatements +
+                    "return result;" +
+                "}");
+
 
                 Object.defineProperty(f, 'holder', {
                     enumerable: true,
