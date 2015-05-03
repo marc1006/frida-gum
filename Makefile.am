@@ -29,7 +29,7 @@ DEBUG_PORT = 5042
 
 push: all
 	adb shell "${MKDIR} \"${RPFX}/tests/\" && ${MKDIR} \"${RPFX}/tests/data/\" && ${RM} \"${RPFX}/tests/gum-tests\" && ${RM} \"${RPFX}/tests/data/targetfunctions-android-arm.so\" && ${RM} \"${RPFX}/tests/data/specialfunctions-android-arm.so\""
-	adb push "$(top_builddir)/tests/.libs/gum-tests" "${RPFX}/tests/"
+	adb push "$(top_builddir)/tests/gum-tests" "${RPFX}/tests/"
 if ARCH_I386
 	adb push "$(top_srcdir)/tests/data/targetfunctions-android-ia32.so" "${RPFX}/tests/data/"
 	adb push "$(top_srcdir)/tests/data/specialfunctions-android-ia32.so" "${RPFX}/tests/data/"
@@ -73,7 +73,7 @@ RSYNC = rsync -az
 check: all
 	ssh "${RURL}" "mkdir -p \"${RPFX}/tests/data/\""
 	${RSYNC} \
-		"$(top_builddir)/tests/.libs/gum-tests" \
+		"$(top_builddir)/tests/gum-tests" \
 		"${RURL}:\"${RPFX}/tests/\""
 	${RSYNC} \
 		"$(top_srcdir)/tests/data/targetfunctions-ios-arm.dylib" \
@@ -81,5 +81,5 @@ check: all
 		"$(top_srcdir)/tests/data/specialfunctions-ios-arm.dylib" \
 		"$(top_srcdir)/tests/data/specialfunctions-ios-arm64.dylib" \
 		"${RURL}:\"${RPFX}/tests/data/\""
-	ssh "${RURL}" "DYLD_LIBRARY_PATH=\"${RPFX}/tests\" \"${RPFX}/tests/gum-tests\""
+	ssh "${RURL}" "\"${RPFX}/tests/gum-tests\""
 endif
