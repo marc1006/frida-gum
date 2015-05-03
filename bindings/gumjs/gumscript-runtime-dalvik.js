@@ -439,9 +439,9 @@ dvmDumpClass(cls, 1);```
                 var field = makeField(jsType, fieldId, jsFieldType, env);
 
                 if (field === null)
-                    throw new Error("no supported field");
+                    throw new Error("No supported field");
 
-                return field; //makeMethodDispatcher(name, fields);
+                return field;
             };
 
             var makeField = function (type, fieldId, fieldType, env) {
@@ -510,7 +510,8 @@ dvmDumpClass(cls, 1);```
                     "return result;" +
                 "}");
                 */
-                 eval("var fu = function () {" +
+                eval("var self = this; console.log('self' + Object.keys(self));");
+                eval("var fu = function () {" +
                     "var env = vm.getEnv();" +
                               "console.log('fu' + Object.keys(this));" +
                     "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
@@ -535,7 +536,6 @@ dvmDumpClass(cls, 1);```
                     returnStatements +
                     "}");
 
-/*
                 var f = {};
                 Object.defineProperty(f, "value", {
                     enumerable: true,
@@ -546,8 +546,8 @@ dvmDumpClass(cls, 1);```
                         throw new Error("Not yet implemented (set)");
                     }
                 });
-*/
 
+                /*
                 eval("var f = function () {" +
                     "var isInstance = this.$handle !== null;" +
                     "if (type === INSTANCE_FIELD && isInstance === false) { " +
@@ -575,6 +575,7 @@ dvmDumpClass(cls, 1);```
                     "}" +
                     returnStatements +
                 "}");
+                */
 
                 Object.defineProperty(f, 'holder', {
                     enumerable: true,
