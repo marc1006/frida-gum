@@ -181,6 +181,7 @@ dvmDumpClass(cls, 1);```
             return classFactory.cast(obj, C);
         };
 
+        // Reference: http://stackoverflow.com/questions/2848575/how-to-detect-ui-thread-on-android
         this.isMainThread = function() {
             if (classFactory.loader === null) {
                 throw new Error("Not allowed outside Dalvik.perform() callback");
@@ -188,8 +189,7 @@ dvmDumpClass(cls, 1);```
             var Looper = classFactory.use("android.os.Looper");
             var mainLooper = Looper.getMainLooper();
             var myLooper = Looper.myLooper();
-            return false;
-           // return mainLooper.$isSameObject(myLooper);
+            return mainLooper.$isSameObject(myLooper);
         };
 
         initialize.call(this);
