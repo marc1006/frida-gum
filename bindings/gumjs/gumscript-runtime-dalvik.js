@@ -2,6 +2,7 @@
 * TODO:
 *  - Adjust usage to ```instance.field.value``` and ```instance.field.value = ...```. For now it's ```instance.field()```
 *  - Create setter
+*  - Create Java-source "template"
 */
 
 /* Reference:
@@ -510,7 +511,6 @@ dvmDumpClass(cls, 1);```
                     "return result;" +
                 "}");
                 */
-                eval("var self = this; console.log('self' + Object.keys(self));");
                 eval("var fu = function () {" +
                     "var env = vm.getEnv();" +
                               "console.log('fu' + Object.keys(this));" +
@@ -540,7 +540,8 @@ dvmDumpClass(cls, 1);```
                 Object.defineProperty(f, "value", {
                     enumerable: true,
                     get: function () {
-                         fu();
+                        console.log(this);
+                        fu.call(this);
                     },
                     set: function(val) {
                         throw new Error("Not yet implemented (set)");
