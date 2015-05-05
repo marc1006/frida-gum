@@ -183,6 +183,7 @@ dvmDumpClass(cls, 1);```
             return classFactory.cast(obj, C);
         };
 
+        // Reference: http://stackoverflow.com/questions/2848575/how-to-detect-ui-thread-on-android
         this.isMainThread = function() {
             if (classFactory.loader === null) {
                 throw new Error("Not allowed outside Dalvik.perform() callback");
@@ -190,8 +191,10 @@ dvmDumpClass(cls, 1);```
             var Looper = classFactory.use("android.os.Looper");
             var mainLooper = Looper.getMainLooper();
             var myLooper = Looper.myLooper();
-            return false;
-           // return mainLooper.$isSameObject(myLooper);
+            if (myLooper === null) {
+                return false;
+            }
+            return mainLooper.$isSameObject(myLooper);
         };
 
         initialize.call(this);
@@ -409,6 +412,7 @@ dvmDumpClass(cls, 1);```
                                     m = makeFieldFromOverloads(name, jsFields[name], vm.getEnv());
                                 });
                             }
+                            console.log(Object.keys(this));
                             return m;
                         }
                     });
@@ -487,76 +491,25 @@ dvmDumpClass(cls, 1);```
                         "return result;"
                     }
                 }
-/*
-                eval("var fmethod = function () {" +
-                    "var env = vm.getEnv();" +
-                    "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
-                        "env.exceptionClear();" +
-                        "throw new Error(\"Out of memory\");" +
-                    "}" +
-                    "try {" +
-                        "synchronizeVtable.call(this, env);" +
-                        returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
-                    "} catch (e) {" +
-                        "env.popLocalFrame(NULL);" +
-                        "throw e;" +
-                    "}" +
-                    "var throwable = env.exceptionOccurred();" +
-                    "if (!throwable.isNull()) {" +
-                        "env.exceptionClear();" +
-                        "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
-                        "var descriptionStr = env.stringFromJni(description);" +
-                        "env.popLocalFrame(NULL);" +
-                        "throw new Error(descriptionStr);" +
-                    "}" +
-                    returnStatements +
-                    "return result;" +
-                "}");
-                */
-                eval("var fu = function () {" +
-                    "var env = vm.getEnv();" +
-                              "console.log('fu' + Object.keys(this));" +
-                    "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
-                        "env.exceptionClear();" +
-                        "throw new Error(\"Out of memory\");" +
-                    "}" +
-                    "try {" +
-                        "synchronizeVtable.call(this, env);" +
-                        returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
-                    "} catch (e) {" +
-                        "env.popLocalFrame(NULL);" +
-                        "throw e;" +
-                    "}" +
-                    "var throwable = env.exceptionOccurred();" +
-                    "if (!throwable.isNull()) {" +
-                        "env.exceptionClear();" +
-                        "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
-                        "var descriptionStr = env.stringFromJni(description);" +
-                        "env.popLocalFrame(NULL);" +
-                        "throw new Error(descriptionStr);" +
-                    "}" +
-                    returnStatements +
-                    "}");
-
-                var f = {};
+            /*
+            var f = {};
                 Object.defineProperty(f, "value", {
                     enumerable: true,
                     get: function () {
-                        console.log(this);
-                        fu.call(this);
+                       return fu;
                     },
                     set: function(val) {
                         throw new Error("Not yet implemented (set)");
                     }
                 });
+                */
 
-                /*
                 eval("var f = function () {" +
                     "var isInstance = this.$handle !== null;" +
                     "if (type === INSTANCE_FIELD && isInstance === false) { " +
-                    "throw new Error(name + ': cannot get instance field without an instance');}" +
+                    "throw new Error(name + ': cannot get instance field without an instance');" +
+                    "}" +
                     "var env = vm.getEnv();" +
-                     "console.log('f' + Object.keys(this));" +
                     "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
                         "env.exceptionClear();" +
                         "throw new Error(\"Out of memory\");" +
@@ -578,7 +531,6 @@ dvmDumpClass(cls, 1);```
                     "}" +
                     returnStatements +
                 "}");
-                */
 
                 Object.defineProperty(f, 'holder', {
                     enumerable: true,
