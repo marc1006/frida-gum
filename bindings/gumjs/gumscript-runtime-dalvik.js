@@ -3,6 +3,8 @@
 *  - Adjust usage to ```instance.field.value``` and ```instance.field.value = ...```. For now it's ```instance.field()```
 *  - Create setter
 *  - Create Java-source "template"
+*  - Find instance pointer in heap
+*  - Find ```DvmGlobals```
 */
 
 /* Reference:
@@ -2061,9 +2063,13 @@ dvmDumpClass(cls, 1);```
                     // void dvmDumpClass(const ClassObject* clazz, int flags);
                     "_Z12dvmDumpClassPK11ClassObjecti": ["dvmDumpClass", 'void', ['pointer', 'int32']]
                 },
+                // Reference: http://osxr.org/android/source/dalvik/vm/Globals.h
                 variables: {
                     "gDvmJni": function (address) {
                         this.gDvmJni = address;
+                    },
+                    "gDvm": function (address) {
+                        this.gDvm = address;
                     }
                 }
             }
