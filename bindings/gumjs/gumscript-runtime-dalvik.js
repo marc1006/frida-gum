@@ -473,21 +473,21 @@ dvmDumpClass(cls, 1);```
                     "targetFieldId"
                 ];
 
-                var returnCapture, returnStatements;
+                var returnCapture, returnStatement;
                 if (rawFieldType === 'void') {
                     returnCapture = "";
-                    returnStatements = "env.popLocalFrame(NULL);";
+                    returnStatement = "env.popLocalFrame(NULL);";
                     throw new Error("Should not be the case");
                 } else {
                     if (fieldType.fromJni) {
                         frameCapacity++;
                         returnCapture = "var rawResult = ";
-                        returnStatements = "var result = fieldType.fromJni.call(this, rawResult, env);" +
+                        returnStatement = "var result = fieldType.fromJni.call(this, rawResult, env);" +
                         "env.popLocalFrame(NULL);" +
                         "return result;"
                     } else {
                         returnCapture = "var result = ";
-                        returnStatements = "env.popLocalFrame(NULL);" +
+                        returnStatement = "env.popLocalFrame(NULL);" +
                         "return result;"
                     }
                 }
@@ -529,7 +529,7 @@ dvmDumpClass(cls, 1);```
                         "env.popLocalFrame(NULL);" +
                         "throw new Error(descriptionStr);" +
                     "}" +
-                    returnStatements +
+                    returnStatement +
                 "}");
 
                 Object.defineProperty(f, 'holder', {
