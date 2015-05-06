@@ -4,11 +4,13 @@
 *  - Create setter
 *  - Create Java-source "template"
 *  - Find instance pointer in heap
-*  - Find ```DvmGlobals```
+*  - Find und handle ```DvmGlobals```
+*  - Rename classes, fields and methods (for deobfuscation)
 */
 
 /* Reference:
-https://www.mulliner.org/android/feed/mulliner_ddi_30c3.pdf
+ * - https://www.mulliner.org/android/feed/mulliner_ddi_30c3.pdf
+ * - https://www1.informatik.uni-erlangen.de/filepool/publications/Live_Memory_Forensics_on_Android_with_Volatility.pdf
 
 Load dex files:
  * dexstuff_loaddex()
@@ -26,7 +28,7 @@ Methods to use:
  * Usage for Static Fields:
     - PUBLIC: this.getStaticIntField(handle, this.getStaticFieldId(handle, "PUBLIC", "I")),
 
-Ideas:
+Code snippets:
  * Replace classes
 ```args[0].l = “PATH/classes.dex”; // must be a string object 
    cookie = dvm_dalvik_system_DexFile[0](args, &pResult);
@@ -52,7 +54,7 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
       ```
  * Dump details of specific class: All methods (incl. signature), fields, etc...
  ```cls = dvmFindLoadedClass(“Lorg/mulliner/collin/work”);
-dvmDumpClass(cls, 1);```
+ dvmDumpClass(cls, 1);```
 */
 
 (function () {
@@ -1559,7 +1561,6 @@ dvmDumpClass(cls, 1);```
         var GET_STATIC_LONG_FIELD_OFFSET = 151;
         var GET_STATIC_FLOAT_FIELD_OFFSET = 152;
         var GET_STATIC_DOUBLE_FIELD_OFFSET = 153;
-        var GET_STATIC_VOID_FIELD_OFFSET = 154;
 
         var callMethodOffset = {
             'pointer': CALL_OBJECT_METHOD_OFFSET,
