@@ -409,17 +409,17 @@ dvmDumpClass(cls, 1);```
                         get: function () {
                             if (m === null) {
                                 vm.perform(function () {
-                                    m = makeFieldFromOverloads(name, jsFields[name], vm.getEnv());
+                                    m = makeField(name, jsFields[name], vm.getEnv());
                                 });
                             }
-                            console.log(Object.keys(this));
+                    //        console.log(Object.keys(th
                             return m;
                         }
                     });
                 });
             };
 
-            var makeFieldFromOverloads = function (name, handle, env) {
+            var makeField = function (name, handle, env) {
                 var Field = env.javaLangReflectField();
                 var Modifier = env.javaLangReflectModifier();
                 var invokeObjectMethodNoArgs = env.method('pointer', []);
@@ -443,7 +443,7 @@ dvmDumpClass(cls, 1);```
                     env.deleteLocalRef(fieldType);
                 }
 
-                var field = makeField(jsType, fieldId, jsFieldType, env);
+                var field = createField(jsType, fieldId, jsFieldType, env);
 
                 if (field === null)
                     throw new Error("No supported field");
@@ -451,7 +451,7 @@ dvmDumpClass(cls, 1);```
                 return field;
             };
 
-            var makeField = function (type, fieldId, fieldType, env) {
+            var createField = function (type, fieldId, fieldType, env) {
                 var targetFieldId = fieldId;
                 var originalFieldId = null;
 
@@ -475,22 +475,21 @@ dvmDumpClass(cls, 1);```
 
                 var returnCapture, returnStatement;
                 if (rawFieldType === 'void') {
-                    returnCapture = "";
-                    returnStatement = "env.popLocalFrame(NULL);";
                     throw new Error("Should not be the case");
-                } else {
-                    if (fieldType.fromJni) {
-                        frameCapacity++;
-                        returnCapture = "var rawResult = ";
-                        returnStatement = "var result = fieldType.fromJni.call(this, rawResult, env);" +
-                        "env.popLocalFrame(NULL);" +
-                        "return result;"
-                    } else {
-                        returnCapture = "var result = ";
-                        returnStatement = "env.popLocalFrame(NULL);" +
-                        "return result;"
-                    }
                 }
+
+                if (fieldType.fromJni) {
+                    frameCapacity++;
+                    returnCapture = "var rawResult = ";
+                    returnStatement = "var result = fieldType.fromJni.call(this, rawResult, env);" +
+                    "env.popLocalFrame(NULL);" +
+                    "return result;"
+                } else {
+                    returnCapture = "var result = ";
+                    returnStatement = "env.popLocalFrame(NULL);" +
+                    "return result;"
+                }
+
             /*
             var f = {};
                 Object.defineProperty(f, "value", {
