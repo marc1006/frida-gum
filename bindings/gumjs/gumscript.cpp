@@ -26,7 +26,16 @@
 #include <string.h>
 #include <v8-debug.h>
 
-#define GUM_SCRIPT_V8_FLAGS "--harmony --expose-gc"
+#define GUM_SCRIPT_V8_FLAGS \
+    "--es-staging " \
+    "--harmony-arrays " \
+    "--harmony-array-includes " \
+    "--harmony-regexps " \
+    "--harmony-arrow-functions " \
+    "--harmony-proxies " \
+    "--harmony-rest-parameters " \
+    "--harmony-reflect " \
+    "--expose-gc"
 
 using namespace v8;
 
@@ -975,7 +984,8 @@ public:
       isolate_scope (parent->priv->isolate),
       handle_scope (parent->priv->isolate),
       context (Local<Context>::New (parent->priv->isolate, *parent->priv->context)),
-      context_scope (context)
+      context_scope (context),
+      trycatch (parent->priv->isolate)
   {
   }
 
@@ -987,15 +997,42 @@ public:
     {
       Handle<Message> message = trycatch.Message ();
       Handle<Value> exception = trycatch.Exception ();
+      trycatch.Reset ();
+
+      GString * error = g_string_new ("{\"type\":\"error\"");
+
+      Local<Value> resource_name = message->GetScriptResourceName ();
+      if (!resource_name->IsUndefined ())
+      {
+        String::Utf8Value resource_name_str (resource_name->ToString ());
+        g_string_append_printf (error, ",\"fileName\":\"%s\"",
+            *resource_name_str);
+
+        Maybe<int> line_number = message->GetLineNumber (context);
+        if (line_number.IsJust ())
+        {
+          g_string_append_printf (error, ",\"lineNumber\":%d",
+              line_number.FromJust ());
+        }
+      }
+
       String::Utf8Value exception_str (exception);
       gchar * exception_str_escaped = g_strescape (*exception_str, "");
-      gchar * error = g_strdup_printf (
-          "{\"type\":\"error\",\"lineNumber\":%d,\"description\":\"%s\"}",
-          message->GetLineNumber (), exception_str_escaped);
-      _gum_script_core_emit_message (&priv->core, error, NULL, 0);
+      g_string_append_printf (error, ",\"description\":\"%s\"",
+          exception_str_escaped);
       g_free (exception_str_escaped);
-      g_free (error);
+
+      g_string_append_c (error, '}');
+
+      _gum_script_core_emit_message (&priv->core, error->str, NULL, 0);
+
+      g_string_free (error, TRUE);
     }
+  }
+
+  bool HasPendingException () const
+  {
+    return trycatch.HasCaught ();
   }
 
 private:
@@ -1020,5 +1057,11 @@ ScriptScope::~ScriptScope ()
   impl = NULL;
 
   _gum_script_stalker_process_pending (&parent->priv->stalker);
+}
+
+bool
+ScriptScope::HasPendingException () const
+{
+  return impl->HasPendingException ();
 }
 
