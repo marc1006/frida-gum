@@ -58,10 +58,11 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
 */
 
 (function () {
-    var _runtime = null;
-    var _api = null;
-    var pointerSize = Process.pointerSize;
-    var scratchBuffer = Memory.alloc(pointerSize);
+    "use strict;"
+    let _runtime = null;
+    let _api = null;
+    const pointerSize = Process.pointerSize;
+    const scratchBuffer = Memory.alloc(pointerSize);
     var JNI_OK = 0;
     var JNI_VERSION_1_6 = 0x00010006;
 
@@ -69,7 +70,7 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
     var STATIC_METHOD = 2;
     var INSTANCE_METHOD = 3;
 
-    // field
+    // fields
     var STATIC_FIELD = 1;
     var INSTANCE_FIELD = 2;
 
@@ -187,6 +188,20 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
 
         // Reference: http://stackoverflow.com/questions/2848575/how-to-detect-ui-thread-on-android
         this.isMainThread = function() {
+            if (classFactory.loader === null) {
+                throw new Error("Not allowed outside Dalvik.perform() callback");
+            }
+            var Looper = classFactory.use("android.os.Looper");
+            var mainLooper = Looper.getMainLooper();
+            var myLooper = Looper.myLooper();
+            if (myLooper === null) {
+                return false;
+            }
+            return mainLooper.$isSameObject(myLooper);
+        };
+
+        // Reference: http://stackoverflow.com/questions/2848575/how-to-detect-ui-thread-on-android
+        this.getLoadedClasses = function() {
             if (classFactory.loader === null) {
                 throw new Error("Not allowed outside Dalvik.perform() callback");
             }
@@ -508,7 +523,7 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                 eval("var f = function () {" +
                     "var isInstance = this.$handle !== null;" +
                     "if (type === INSTANCE_FIELD && isInstance === false) { " +
-                    "throw new Error(name + ': cannot get instance field without an instance');" +
+                        "throw new Error(name + ': cannot get instance field without an instance');" +
                     "}" +
                     "var env = vm.getEnv();" +
                     "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
@@ -1015,17 +1030,17 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                                 argsSize++;
                             }
 
-                            // make method native
+                            /* make method native (with 0x0100)
+                             * insSize and registersSize are set to arguments size
+                             */
                             var accessFlags = Memory.readU32(methodId.add(METHOD_OFFSET_ACCESS_FLAGS)) | 0x0100;
                             var registersSize = argsSize;
+
                             var outsSize = 0;
                             var insSize = argsSize;
                             // parse method arguments
                             var jniArgInfo = 0x80000000;
-                            /*
-                            insSize and registersSize are set to a specific value (next slides)
-                            insns is saved for calling original function (next slides)
-                             */
+
 
                             Memory.writeU32(methodId.add(METHOD_OFFSET_ACCESS_FLAGS), accessFlags);
                             Memory.writeU16(methodId.add(METHOD_OFFSET_REGISTERS_SIZE), registersSize);
@@ -1459,10 +1474,48 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
         var initialize = function () {
             handle = Memory.readPointer(api.gDvmJni.add(8));
 
+            /*
+             * JNI invocation interface.
+             *
+             * struct JNIInvokeInterface {
+             *   void*       reserved0;
+             *   void*       reserved1;
+             *   void*       reserved2;
+             *   jint        (*DestroyJavaVM)(JavaVM*);
+             *   jint        (*AttachCurrentThread)(JavaVM*, JNIEnv**, void*);
+             *   jint        (*DetachCurrentThread)(JavaVM*);
+             *   jint        (*GetEnv)(JavaVM*, void**, jint);
+             *   jint        (*AttachCurrentThreadAsDaemon)(JavaVM*, JNIEnv**, void*);
+             * };
+             */
             var vtable = Memory.readPointer(handle);
             attachCurrentThread = new NativeFunction(Memory.readPointer(vtable.add(4 * pointerSize)), 'int32', ['pointer', 'pointer', 'pointer']);
             detachCurrentThread = new NativeFunction(Memory.readPointer(vtable.add(5 * pointerSize)), 'int32', ['pointer']);
             getEnv = new NativeFunction(Memory.readPointer(vtable.add(6 * pointerSize)), 'int32', ['pointer', 'pointer', 'int32']);
+
+            var handle2 = Memory.readPointer(api.gDvm.add(8));
+            var vtable2 = Memory.readPointer(handle2);
+            attachCurrentThread = new NativeFunction(Memory.readPointer(vtable.add(4 * pointerSize)), 'int32', ['pointer', 'pointer', 'pointer']);
+
+
+            /*
+            # test if a given DvmGlobals object is the real deal
+def isDvmGlobals(gDvm):
+    # TODO: Do we need better heuristics here? At least for the
+    # stackSize it might be unsafe to always assume 16K. But does the
+    # trick for now.
+    if gDvm.stackSize != 16384:
+        return False
+    if not "/system/framework/core.jar" in getString(gDvm.bootClassPathStr)+"":
+        return False
+    if gDvm.heapMaximumSize == 0:
+        return False
+    # TODO: Some more, or even better checks
+    return True
+
+             */
+
+
         };
 
         this.perform = function (fn) {
@@ -1779,6 +1832,7 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
             return impl(this.handle, array);
         });
 
+        // jobjectArray NewObjectArray(JNIEnv *env, jsize length, jclass elementClass, jobject initialElement);
         Env.prototype.newObjectArray = proxy(172, 'pointer', ['pointer', 'int32', 'pointer', 'pointer'], function (impl, length, elementClass, initialElement) {
             return impl(this.handle, length, elementClass, initialElement);
         });
@@ -1787,6 +1841,7 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
             return impl(this.handle, array, index);
         });
 
+        // void SetObjectArrayElement(JNIEnv *env, jobjectArray array, jsize index, jobject value);
         Env.prototype.setObjectArrayElement = proxy(174, 'void', ['pointer', 'pointer', 'int32', 'pointer'], function (impl, array, index, value) {
             impl(this.handle, array, index, value);
         });
@@ -2006,12 +2061,17 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                     * The caller must call dvmReleaseTrackedAlloc on the result.
                     * Object* dvmGetSystemClassLoader() */
                     "_Z23dvmGetSystemClassLoaderv": ["dvmGetSystemClassLoader", 'pointer',[]],
+
                     /* Get the method currently being executed by examining the interp stack.
-                     * const Method* dvmGetCurrentJNIMethod(); */
+                     * const Method* dvmGetCurrentJNIMethod();
+                     */
                     "_Z22dvmGetCurrentJNIMethodv": ["dvmGetCurrentJNIMethod", 'pointer', []],
-                    /* For debugging */
-                    // void dvmDumpAllClasses(int flags);
+
+                    /*  void dvmDumpAllClasses(int flags);
+                     *  flags:  0 = only class names, 1 = also class details
+                     */
                     "_Z17dvmDumpAllClassesi": ["dvmDumpAllClasses", 'void', ['int32']],
+
                     // void dvmDumpClass(const ClassObject* clazz, int flags);
                     "_Z12dvmDumpClassPK11ClassObjecti": ["dvmDumpClass", 'void', ['pointer', 'int32']]
                 },
