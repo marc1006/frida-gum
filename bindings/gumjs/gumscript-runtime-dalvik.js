@@ -59,11 +59,19 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
 
 (function () {
     "use strict;"
-    let _runtime = null;
-    let _api = null;
-    const pointerSize = Process.pointerSize;
-    const scratchBuffer = Memory.alloc(pointerSize);
+    var _runtime = null;
+    var _api = null;
+    var pointerSize = Process.pointerSize;
+    var scratchBuffer = Memory.alloc(pointerSize);
+    /* no error */
     var JNI_OK = 0;
+    /* generic error */
+    var JNI_ERR = -1;
+    /* thread detached from the VM */
+    var JNI_EDETACHED = -2;
+    /* JNI version error */
+    var JNI_VERSION = -3;
+
     var JNI_VERSION_1_6 = 0x00010006;
 
     var CONSTRUCTOR_METHOD = 1;
@@ -200,18 +208,14 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
             return mainLooper.$isSameObject(myLooper);
         };
 
-        // Reference: http://stackoverflow.com/questions/2848575/how-to-detect-ui-thread-on-android
-        this.getLoadedClasses = function() {
-            if (classFactory.loader === null) {
-                throw new Error("Not allowed outside Dalvik.perform() callback");
+        // flag: 0 = only class names, 1 = also class details
+        this.dumpAllClassesToLogcat = function(flag) {
+            if (flag === 0 || flagg === 1) {
+                api.dvmDumpAllClasses(flag);
+                return true;
+            } else {
+                throw new Error("Flag must be 0 for only class names or 1 for also class details");
             }
-            var Looper = classFactory.use("android.os.Looper");
-            var mainLooper = Looper.getMainLooper();
-            var myLooper = Looper.myLooper();
-            if (myLooper === null) {
-                return false;
-            }
-            return mainLooper.$isSameObject(myLooper);
         };
 
         initialize.call(this);
@@ -1237,7 +1241,10 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
             return result;
         };
 
-        // http://docs.oracle.com/javase/6/docs/technotes/guides/jni/spec/types.html#wp9502
+        /*
+         * http://docs.oracle.com/javase/6/docs/technotes/guides/jni/spec/types.html#wp9502
+         * http://www.liaohuqiu.net/posts/android-object-size-dalvik/
+         */
         var types = {
             'boolean': {
                 type: 'uint8',
@@ -1472,10 +1479,11 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
         var getEnv = null;
 
         var initialize = function () {
+            // pointer to ```JNIInvokeInterface* JavaVM;```
             handle = Memory.readPointer(api.gDvmJni.add(8));
 
             /*
-             * JNI invocation interface.
+             * JNI invocation interface. (see jni.h)
              *
              * struct JNIInvokeInterface {
              *   void*       reserved0;
@@ -1493,9 +1501,9 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
             detachCurrentThread = new NativeFunction(Memory.readPointer(vtable.add(5 * pointerSize)), 'int32', ['pointer']);
             getEnv = new NativeFunction(Memory.readPointer(vtable.add(6 * pointerSize)), 'int32', ['pointer', 'pointer', 'int32']);
 
-            var handle2 = Memory.readPointer(api.gDvm.add(8));
-            var vtable2 = Memory.readPointer(handle2);
-            attachCurrentThread = new NativeFunction(Memory.readPointer(vtable.add(4 * pointerSize)), 'int32', ['pointer', 'pointer', 'pointer']);
+            var ptrgDvm = Memory.readPointer(api.gDvm.add(0));
+            var vtable2 = Memory.readPointer(ptrgDvm);
+            //attachCurrentThread = new NativeFunction(Memory.readPointer(vtable.add(4 * pointerSize)), 'int32', ['pointer', 'pointer', 'pointer']);
 
 
             /*
@@ -1542,6 +1550,8 @@ def isDvmGlobals(gDvm):
         };
 
         this.attachCurrentThread = function () {
+            // hopefully we will get the pointer for JNIEnv
+            // jint        (*AttachCurrentThread)(JavaVM*, JNIEnv**, void*);
             checkJniResult("VM::AttachCurrentThread", attachCurrentThread(handle, scratchBuffer, NULL));
             return new Env(Memory.readPointer(scratchBuffer));
         };
@@ -1685,6 +1695,7 @@ def isDvmGlobals(gDvm):
             return cachedVtable;
         }
 
+         // Reference: http://docs.oracle.com/javase/7/docs/technotes/guides/jni/spec/functions.html for the offset
         function proxy(offset, retType, argTypes, wrapper) {
             var impl = null;
             return function () {
