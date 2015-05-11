@@ -561,12 +561,6 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                 //   throw new Error('unable to convert to JNI ' + fieldType);
                 }
 
-                var setArgs = [
-                    "env.handle",
-                    type === INSTANCE_FIELD ? "this.$handle" : "this.$classHandle",
-                    "targetFieldId"
-                ];
-
                 eval("var mu = function (valu) {" +
                     "var isInstance = this.$handle !== null;" +
                     "if (type === INSTANCE_FIELD && isInstance === false) { " +
@@ -576,7 +570,7 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                     "var env = vm.getEnv();" +
                     "try {" +
                          inputStatement +
-                         "setFunction(" + setArgs.join(", ") + ", input);" +
+                         "setFunction(" + callArgs.join(", ") + ", input);" +
                     "} catch (e) {" +
                         "throw e;" +
                     "}" +
