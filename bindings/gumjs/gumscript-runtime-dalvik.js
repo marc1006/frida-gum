@@ -433,7 +433,9 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                                     m = makeField(name, jsFields[name], vm.getEnv());
                                 });
                             }
-                    //        console.log(Object.keys(th
+                            // TODO for the moment it's an ugly bugfix...
+                            m.temp = this;
+
                             return m;
                         }
                     });
@@ -511,20 +513,7 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                     "return result;"
                 }
 
-            /*
-            var f = {};
-                Object.defineProperty(f, "value", {
-                    enumerable: true,
-                    get: function () {
-                       return fu;
-                    },
-                    set: function(val) {
-                        throw new Error("Not yet implemented (set)");
-                    }
-                });
-                */
-
-                eval("var f = function () {" +
+                eval("var fu = function () {" +
                     "var isInstance = this.$handle !== null;" +
                     "if (type === INSTANCE_FIELD && isInstance === false) { " +
                         "throw new Error(name + ': cannot get instance field without an instance');" +
@@ -552,6 +541,66 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                     returnStatement +
                 "}");
 
+                /*
+                 * setter
+                 */
+                var setFunction = null;
+                if (type === STATIC_FIELD) {
+                   setFunction = env.setStaticField(rawFieldType);
+                } else if (type === INSTANCE_FIELD) {
+                    setFunction = env.setField(rawFieldType);
+                } else {
+                    throw new Error("Should not be the case");
+                }
+
+                var inputStatement = null;
+                if (fieldType.toJni) {
+                    inputStatement = "var input = fieldType.toJni.call(this, valu, env);";
+                } else {
+                    inputStatement = "var input = valu;";
+                //   throw new Error('unable to convert to JNI ' + fieldType);
+                }
+
+                var setArgs = [
+                    "env.handle",
+                    type === INSTANCE_FIELD ? "this.$handle" : "this.$classHandle",
+                    "targetFieldId"
+                ];
+
+                eval("var mu = function (valu) {" +
+                    "var isInstance = this.$handle !== null;" +
+                    "if (type === INSTANCE_FIELD && isInstance === false) { " +
+                        "throw new Error(name + ': cannot set an instance field without an instance');" +
+                    "}" +
+                    "if (!fieldType.isCompatible(valu)) {throw new Error(name + ': input is not compatible');}" +
+                    "var env = vm.getEnv();" +
+                    "try {" +
+                         inputStatement +
+                         "setFunction(" + setArgs.join(", ") + ", input);" +
+                    "} catch (e) {" +
+                        "throw e;" +
+                    "}" +
+                    "var throwable = env.exceptionOccurred();" +
+                    "if (!throwable.isNull()) {" +
+                        "env.exceptionClear();" +
+                        "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
+                        "var descriptionStr = env.stringFromJni(description);" +
+                        "env.popLocalFrame(NULL);" +
+                        "throw new Error(descriptionStr);" +
+                    "}" +
+                    "}");
+
+                var f = {};
+                Object.defineProperty(f, "value", {
+                    enumerable: true,
+                    get: function () {
+                       return fu.call(this.temp);
+                    },
+                    set: function(val) {
+                        mu.call(this.temp, val);
+                    }
+                });
+
                 Object.defineProperty(f, 'holder', {
                     enumerable: true,
                     value: klass
@@ -570,50 +619,7 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                 var implementation = null;
                 var synchronizeVtable = function (env) {
                     return;
-                   /* if (originalFieldId === null) {
-                        return; // nothing to do – implementation hasn't been replaced
-                    }
 
-                    var thread = Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
-                    var objectPtr = api.dvmDecodeIndirectRef(thread, this.$handle);
-                    var classObject = Memory.readPointer(objectPtr.add(OBJECT_OFFSET_CLAZZ));
-                    var key = classObject.toString(16);
-                    var entry = patchedClasses[key];
-                    if (!entry) {
-                        var vtablePtr = classObject.add(CLASS_OBJECT_OFFSET_VTABLE);
-                        var vtableCountPtr = classObject.add(CLASS_OBJECT_OFFSET_VTABLE_COUNT);
-                        var vtable = Memory.readPointer(vtablePtr);
-                        var vtableCount = Memory.readS32(vtableCountPtr);
-
-                        var vtableSize = vtableCount * pointerSize;
-                        var shadowVtable = Memory.alloc(2 * vtableSize);
-                        Memory.copy(shadowVtable, vtable, vtableSize);
-                        Memory.writePointer(vtablePtr, shadowVtable);
-
-                        entry = {
-                            classObject: classObject,
-                            vtablePtr: vtablePtr,
-                            vtableCountPtr: vtableCountPtr,
-                            vtable: vtable,
-                            vtableCount: vtableCount,
-                            shadowVtable: shadowVtable,
-                            shadowVtableCount: vtableCount,
-                            targetMethods: {}
-                        };
-                        patchedClasses[key] = entry;
-                    }
-
-                    key = fieldId.toString(16);
-                    var method = entry.targetMethods[key];
-                    if (!method) {
-                        var methodIndex = entry.shadowVtableCount++;
-                        Memory.writePointer(entry.shadowVtable.add(methodIndex * pointerSize), targetMethodId);
-                        Memory.writeU16(targetMethodId.add(METHOD_OFFSET_METHOD_INDEX), methodIndex);
-                        Memory.writeS32(entry.vtableCountPtr, entry.shadowVtableCount);
-
-                        entry.targetMethods[key] = f;
-                    }
-                    */
                 };
 
                 return f;
@@ -1173,6 +1179,7 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
             eval("var f = function (" + ["envHandle", "thisHandle"].concat(argVariableNames).join(", ") + ") {" +
                 "var env = new Env(envHandle);" +
                 "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
+                    "console.log('Implementation: nicht okay');" +
                     "return;" +
                 "}" +
                 ((type === INSTANCE_METHOD) ? "var self = new C(C.__handle__, thisHandle);" : "var self = new C(thisHandle, null);") +
@@ -1181,6 +1188,7 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                 "} catch (e) {" +
                     "if (typeof e === 'object' && e.hasOwnProperty('$handle')) {" +
                         "env.throw(e.$handle);" +
+                        "console.log('Fehler bei der Implementation');"+ // TODO
                         returnNothing +
                     "} else {" +
                         "throw e;" +
@@ -1615,6 +1623,20 @@ def isDvmGlobals(gDvm):
         var GET_FLOAT_FIELD_OFFSET = 102;
         var GET_DOUBLE_FIELD_OFFSET = 103;
 
+        /*
+         * Set<type>Field Routines
+         * void Set<type>Field(JNIEnv *env, jobject obj, jfieldID fieldID, NativeType value);
+         */
+        var SET_OBJECT_FIELD_OFFSET = 104;
+        var SET_BOOLEAN_FIELD_OFFSET = 105;
+        var SET_BYTE_FIELD_OFFSET = 106;
+        var SET_CHAR_FIELD_OFFSET = 107;
+        var SET_SHORT_FIELD_OFFSET = 108;
+        var SET_INT_FIELD_OFFSET = 109;
+        var SET_LONG_FIELD_OFFSET = 110;
+        var SET_FLOAT_FIELD_OFFSET = 111;
+        var SET_DOUBLE_FIELD_OFFSET = 112;
+
         var GET_STATIC_OBJECT_FIELD_OFFSET = 145;
         var GET_STATIC_BOOLEAN_FIELD_OFFSET = 146;
         var GET_STATIC_BYTE_FIELD_OFFSET = 147;
@@ -1624,6 +1646,20 @@ def isDvmGlobals(gDvm):
         var GET_STATIC_LONG_FIELD_OFFSET = 151;
         var GET_STATIC_FLOAT_FIELD_OFFSET = 152;
         var GET_STATIC_DOUBLE_FIELD_OFFSET = 153;
+
+        /*
+         * SetStatic<type>Field Routines
+         * void SetStatic<type>Field(JNIEnv *env, jclass clazz, jfieldID fieldID, NativeType value);
+         */
+        var SET_STATIC_OBJECT_FIELD_OFFSET = 154;
+        var SET_STATIC_BOOLEAN_FIELD_OFFSET = 155;
+        var SET_STATIC_BYTE_FIELD_OFFSET = 156;
+        var SET_STATIC_CHAR_FIELD_OFFSET = 157;
+        var SET_STATIC_SHORT_FIELD_OFFSET = 158;
+        var SET_STATIC_INT_FIELD_OFFSET = 159;
+        var SET_STATIC_LONG_FIELD_OFFSET = 160;
+        var SET_STATIC_FLOAT_FIELD_OFFSET = 161;
+        var SET_STATIC_DOUBLE_FIELD_OFFSET = 162;
 
         var callMethodOffset = {
             'pointer': CALL_OBJECT_METHOD_OFFSET,
@@ -1663,6 +1699,18 @@ def isDvmGlobals(gDvm):
             'double': GET_DOUBLE_FIELD_OFFSET
         };
 
+        var setFieldOffset = {
+            'pointer': SET_OBJECT_FIELD_OFFSET,
+            'uint8': SET_BOOLEAN_FIELD_OFFSET,
+            'int8': SET_BYTE_FIELD_OFFSET,
+            'uint16': SET_CHAR_FIELD_OFFSET,
+            'int16': SET_SHORT_FIELD_OFFSET,
+            'int32': SET_INT_FIELD_OFFSET,
+            'int64': SET_LONG_FIELD_OFFSET,
+            'float': SET_FLOAT_FIELD_OFFSET,
+            'double': SET_DOUBLE_FIELD_OFFSET
+        };
+
         var getStaticFieldOffset = {
             'pointer': GET_STATIC_OBJECT_FIELD_OFFSET,
             'uint8': GET_STATIC_BOOLEAN_FIELD_OFFSET,
@@ -1675,6 +1723,17 @@ def isDvmGlobals(gDvm):
             'double': GET_STATIC_DOUBLE_FIELD_OFFSET
         };
 
+        var setStaticFieldOffset = {
+            'pointer': SET_STATIC_OBJECT_FIELD_OFFSET,
+            'uint8': SET_STATIC_BOOLEAN_FIELD_OFFSET,
+            'int8': SET_STATIC_BYTE_FIELD_OFFSET,
+            'uint16': SET_STATIC_CHAR_FIELD_OFFSET,
+            'int16': SET_STATIC_SHORT_FIELD_OFFSET,
+            'int32': SET_STATIC_INT_FIELD_OFFSET,
+            'int64': SET_STATIC_LONG_FIELD_OFFSET,
+            'float': SET_STATIC_FLOAT_FIELD_OFFSET,
+            'double': SET_STATIC_DOUBLE_FIELD_OFFSET
+        };
 
         var cachedVtable = null;
         var globalRefs = [];
@@ -1898,6 +1957,20 @@ def isDvmGlobals(gDvm):
             if (offset === undefined)
                 throw new Error("Unsupported type: " + fieldType);
             return method(offset, fieldType, []);
+        };
+
+        Env.prototype.setField = function (fieldType) {
+            var offset = setFieldOffset[fieldType];
+            if (offset === undefined)
+                throw new Error("Unsupported type: " + fieldType);
+            return method(offset, 'void', [fieldType]);
+        };
+
+        Env.prototype.setStaticField = function (fieldType) {
+            var offset = setStaticFieldOffset[fieldType];
+            if (offset === undefined)
+                throw new Error("Unsupported type: " + fieldType);
+            return method(offset, 'void', [fieldType]);
         };
 
         var javaLangClass = null;
