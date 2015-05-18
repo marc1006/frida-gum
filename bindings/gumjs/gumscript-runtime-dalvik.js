@@ -1,61 +1,61 @@
 /*
-* TODO:
-*  - Adjust usage to ```instance.field.value``` and ```instance.field.value = ...```. For now it's ```instance.field()```
-*  - Create setter
-*  - Create Java-source "template"
-*  - Find instance pointer in heap
-*  - Find und handle ```DvmGlobals```
-*  - Rename classes, fields and methods (for deobfuscation)
-*/
+ * TODO:
+ *  - Adjust usage to ```instance.field.value``` and ```instance.field.value = ...```. For now it's ```instance.field()```
+ *  - Create setter
+ *  - Create Java-source "template"
+ *  - Find instance pointer in heap
+ *  - Find und handle ```DvmGlobals```
+ *  - Rename classes, fields and methods (for deobfuscation)
+ */
 
 /* Reference:
  * - https://www.mulliner.org/android/feed/mulliner_ddi_30c3.pdf
  * - https://www1.informatik.uni-erlangen.de/filepool/publications/Live_Memory_Forensics_on_Android_with_Volatility.pdf
 
-Load dex files:
+ Load dex files:
  * dexstuff_loaddex()
  * dexstuff_defineclass()
 
-Important own functions:
+ Important own functions:
  * function proxy(offset, retType, argTypes, wrapper);
 
-How to get proxy offset:
+ How to get proxy offset:
  * http://osxr.org/android/source/libnativehelper/include/nativehelper/jni.h
  * http://docs.oracle.com/javase/7/docs/technotes/guides/jni/spec/functions.html for the offset
 
-Methods to use:
+ Methods to use:
  * findClass(...)
  * Usage for Static Fields:
-    - PUBLIC: this.getStaticIntField(handle, this.getStaticFieldId(handle, "PUBLIC", "I")),
+ - PUBLIC: this.getStaticIntField(handle, this.getStaticFieldId(handle, "PUBLIC", "I")),
 
-Code snippets:
+ Code snippets:
  * Replace classes
-```args[0].l = “PATH/classes.dex”; // must be a string object 
-   cookie = dvm_dalvik_system_DexFile[0](args, &pResult);
-   // get class loader
-Method *m = dvmGetCurrentJNIMethod();
-// define class
-u4 args[] = { 
-  “org.mulliner.collin.work”, // class name (string object)
-  m­>clazz­>classLoader,      // class loader
-  cookie                      // use DEX file loaded above  
-};
-dvm_dalvik_system_DexFile[3](args, &pResult);```
+ ```args[0].l = “PATH/classes.dex”; // must be a string object 
+ cookie = dvm_dalvik_system_DexFile[0](args, &pResult);
+ // get class loader
+ Method *m = dvmGetCurrentJNIMethod();
+ // define class
+ u4 args[] = { 
+   “org.mulliner.collin.work”, // class name (string object)
+   m­>clazz­>classLoader,      // class loader
+   cookie                      // use DEX file loaded above  
+ };
+ dvm_dalvik_system_DexFile[3](args, &pResult);```
 
  * Example usage
-    ```cls = dvmFindLoadedClass(“Ljava/lang/String;”);
-    met = dvmFindVirtualMethodHierByDescriptor(cls, “compareTo”,
-                                  “(Ljava/lang/String;)I”);```
+ ```cls = dvmFindLoadedClass(“Ljava/lang/String;”);
+ met = dvmFindVirtualMethodHierByDescriptor(cls, “compareTo”,
+                                   “(Ljava/lang/String;)I”);```
  * Dump list of loaded classes in current VM
-    – Useful to find out which system process runs a specific
-      framework service
-      ```// level  0 = only class names 1 = class details
-          dvmDumpAllClasses(level);
-      ```
+ – Useful to find out which system process runs a specific
+ framework service
+ ```// level  0 = only class names 1 = class details
+ dvmDumpAllClasses(level);
+ ```
  * Dump details of specific class: All methods (incl. signature), fields, etc...
  ```cls = dvmFindLoadedClass(“Lorg/mulliner/collin/work”);
  dvmDumpClass(cls, 1);```
-*/
+ */
 
 (function () {
     "use strict;"
@@ -81,6 +81,10 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
     // fields
     var STATIC_FIELD = 1;
     var INSTANCE_FIELD = 2;
+
+    // android/source/dalvik/vm/Hash.h
+    // invalid ptr value
+    var HASH_TOMBSTONE = 0xcbcacccd;
 
     // TODO: 64-bit
     var JNI_ENV_OFFSET_SELF = 12;
@@ -194,8 +198,12 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
             return classFactory.cast(obj, C);
         };
 
+        this.getObjectClassname = function (obj) {
+            return classFactory.getObjectClassname(obj);
+        };
+
         // Reference: http://stackoverflow.com/questions/2848575/how-to-detect-ui-thread-on-android
-        this.isMainThread = function() {
+        this.isMainThread = function () {
             if (classFactory.loader === null) {
                 throw new Error("Not allowed outside Dalvik.perform() callback");
             }
@@ -209,7 +217,7 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
         };
 
         // flag: 0 = only class names, 1 = also class details
-        this.dumpAllClassesToLogcat = function(flag) {
+        this.dumpAllClassesToLogcat = function (flag) {
             if (flag === 0 || flagg === 1) {
                 api.dvmDumpAllClasses(flag);
                 return true;
@@ -292,6 +300,25 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
             return new C(C.__handle__, handle);
         };
 
+        this.getObjectClassname = function (obj) {
+            if (obj instanceof NativePointer) {
+                var env = vm.getEnv();
+                var jklass = env.getObjectClass(obj);
+                var clsObj = env.method('pointer', [])(env.handle, jklass, env.javaLangObject().getClass);
+                var cls = env.getObjectClass(clsObj);
+                var mid = env.method('pointer', [])(env.handle, cls, env.javaLangClass().getName);
+                var clsStr = env.stringFromJni(mid);
+                env.deleteLocalRef(jklass);
+                env.deleteLocalRef(clsObj);
+                env.deleteLocalRef(cls);
+                env.deleteLocalRef(mid);
+                //this.deleteLocalRef(throwable);
+                return clsStr;
+            } else {
+                throw new Error('Parameter has to be an native pointer.');
+            }
+        };
+
         var ensureClass = function (classHandle, cachedName) {
             var env = vm.getEnv();
 
@@ -311,12 +338,12 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
             }
 
             eval("klass = function " + basename(name) + "(classHandle, handle) {" +
-                 "var env = vm.getEnv();" +
-                 "this.$classWrapper = klass;" +
-                 "this.$classHandle = env.newGlobalRef(classHandle);" +
-                 "this.$handle = (handle !== null) ? env.newGlobalRef(handle) : null;" +
-                 "this.$weakRef = WeakRef.bind(this, makeHandleDestructor(this.$handle, this.$classHandle));" +
-            "};");
+                "var env = vm.getEnv();" +
+                "this.$classWrapper = klass;" +
+                "this.$classHandle = env.newGlobalRef(classHandle);" +
+                "this.$handle = (handle !== null) ? env.newGlobalRef(handle) : null;" +
+                "this.$weakRef = WeakRef.bind(this, makeHandleDestructor(this.$handle, this.$classHandle));" +
+                "};");
 
             classes[name] = klass;
 
@@ -481,7 +508,7 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                 var rawFieldType = fieldType.type;
                 var invokeTarget = null;
                 if (type === STATIC_FIELD) {
-                   invokeTarget = env.staticField(rawFieldType);
+                    invokeTarget = env.staticField(rawFieldType);
                 } else if (type === INSTANCE_FIELD) {
 
                     invokeTarget = env.field(rawFieldType);
@@ -505,48 +532,48 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                     frameCapacity++;
                     returnCapture = "var rawResult = ";
                     returnStatement = "var result = fieldType.fromJni.call(this, rawResult, env);" +
-                    "env.popLocalFrame(NULL);" +
-                    "return result;"
+                        "env.popLocalFrame(NULL);" +
+                        "return result;"
                 } else {
                     returnCapture = "var result = ";
                     returnStatement = "env.popLocalFrame(NULL);" +
-                    "return result;"
+                        "return result;"
                 }
 
                 eval("var fu = function () {" +
                     "var isInstance = this.$handle !== null;" +
                     "if (type === INSTANCE_FIELD && isInstance === false) { " +
-                        "throw new Error(name + ': cannot get instance field without an instance');" +
+                    "throw new Error(name + ': cannot get instance field without an instance');" +
                     "}" +
                     "var env = vm.getEnv();" +
                     "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
-                        "env.exceptionClear();" +
-                        "throw new Error(\"Out of memory\");" +
+                    "env.exceptionClear();" +
+                    "throw new Error(\"Out of memory\");" +
                     "}" +
                     "try {" +
-                        "synchronizeVtable.call(this, env);" +
-                        returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
+                    "synchronizeVtable.call(this, env);" +
+                    returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
                     "} catch (e) {" +
-                        "env.popLocalFrame(NULL);" +
-                        "throw e;" +
+                    "env.popLocalFrame(NULL);" +
+                    "throw e;" +
                     "}" +
                     "var throwable = env.exceptionOccurred();" +
                     "if (!throwable.isNull()) {" +
-                        "env.exceptionClear();" +
-                        "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
-                        "var descriptionStr = env.stringFromJni(description);" +
-                        "env.popLocalFrame(NULL);" +
-                        "throw new Error(descriptionStr);" +
+                    "env.exceptionClear();" +
+                    "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
+                    "var descriptionStr = env.stringFromJni(description);" +
+                    "env.popLocalFrame(NULL);" +
+                    "throw new Error(descriptionStr);" +
                     "}" +
                     returnStatement +
-                "}");
+                    "}");
 
                 /*
                  * setter
                  */
                 var setFunction = null;
                 if (type === STATIC_FIELD) {
-                   setFunction = env.setStaticField(rawFieldType);
+                    setFunction = env.setStaticField(rawFieldType);
                 } else if (type === INSTANCE_FIELD) {
                     setFunction = env.setField(rawFieldType);
                 } else {
@@ -558,29 +585,29 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                     inputStatement = "var input = fieldType.toJni.call(this, valu, env);";
                 } else {
                     inputStatement = "var input = valu;";
-                //   throw new Error('unable to convert to JNI ' + fieldType);
+                    //   throw new Error('unable to convert to JNI ' + fieldType);
                 }
 
                 eval("var mu = function (valu) {" +
                     "var isInstance = this.$handle !== null;" +
                     "if (type === INSTANCE_FIELD && isInstance === false) { " +
-                        "throw new Error(name + ': cannot set an instance field without an instance');" +
+                    "throw new Error(name + ': cannot set an instance field without an instance');" +
                     "}" +
                     "if (!fieldType.isCompatible(valu)) {throw new Error(name + ': input is not compatible');}" +
                     "var env = vm.getEnv();" +
                     "try {" +
-                         inputStatement +
-                         "setFunction(" + callArgs.join(", ") + ", input);" +
+                    inputStatement +
+                    "setFunction(" + callArgs.join(", ") + ", input);" +
                     "} catch (e) {" +
-                        "throw e;" +
+                    "throw e;" +
                     "}" +
                     "var throwable = env.exceptionOccurred();" +
                     "if (!throwable.isNull()) {" +
-                        "env.exceptionClear();" +
-                        "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
-                        "var descriptionStr = env.stringFromJni(description);" +
-                        "env.popLocalFrame(NULL);" +
-                        "throw new Error(descriptionStr);" +
+                    "env.exceptionClear();" +
+                    "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
+                    "var descriptionStr = env.stringFromJni(description);" +
+                    "env.popLocalFrame(NULL);" +
+                    "throw new Error(descriptionStr);" +
                     "}" +
                     "}");
 
@@ -588,9 +615,9 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                 Object.defineProperty(f, "value", {
                     enumerable: true,
                     get: function () {
-                       return fu.call(this.temp);
+                        return fu.call(this.temp);
                     },
-                    set: function(val) {
+                    set: function (val) {
                         mu.call(this.temp, val);
                     }
                 });
@@ -810,7 +837,9 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                         var signature = Array.prototype.join.call(arguments, ":");
                         for (var i = 0; i !== group.length; i++) {
                             var method = group[i];
-                            var s = method.argumentTypes.map(function (t) { return t.className; }).join(":");
+                            var s = method.argumentTypes.map(function (t) {
+                                return t.className;
+                            }).join(":");
                             if (s === signature) {
                                 return method;
                             }
@@ -889,7 +918,9 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                 var originalMethodId = null;
 
                 var rawRetType = retType.type;
-                var rawArgTypes = argTypes.map(function (t) { return t.type; });
+                var rawArgTypes = argTypes.map(function (t) {
+                    return t.type;
+                });
                 var invokeTarget;
                 if (type == CONSTRUCTOR_METHOD) {
                     invokeTarget = env.constructor(rawArgTypes);
@@ -908,12 +939,12 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                     type === INSTANCE_METHOD ? "this.$handle" : "this.$classHandle",
                     "targetMethodId"
                 ].concat(argTypes.map(function (t, i) {
-                    if (t.toJni) {
-                        frameCapacity++;
-                        return "argTypes[" + i + "].toJni.call(this, " + argVariableNames[i] + ", env)";
-                    }
-                    return argVariableNames[i];
-                }));
+                        if (t.toJni) {
+                            frameCapacity++;
+                            return "argTypes[" + i + "].toJni.call(this, " + argVariableNames[i] + ", env)";
+                        }
+                        return argVariableNames[i];
+                    }));
                 var returnCapture, returnStatements;
                 if (rawRetType === 'void') {
                     returnCapture = "";
@@ -934,26 +965,26 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                 eval("var f = function (" + argVariableNames.join(", ") + ") {" +
                     "var env = vm.getEnv();" +
                     "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
-                        "env.exceptionClear();" +
-                        "throw new Error(\"Out of memory\");" +
+                    "env.exceptionClear();" +
+                    "throw new Error(\"Out of memory\");" +
                     "}" +
                     "try {" +
-                        "synchronizeVtable.call(this, env);" +
-                        returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
+                    "synchronizeVtable.call(this, env);" +
+                    returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
                     "} catch (e) {" +
-                        "env.popLocalFrame(NULL);" +
-                        "throw e;" +
+                    "env.popLocalFrame(NULL);" +
+                    "throw e;" +
                     "}" +
                     "var throwable = env.exceptionOccurred();" +
                     "if (!throwable.isNull()) {" +
-                        "env.exceptionClear();" +
-                        "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
-                        "var descriptionStr = env.stringFromJni(description);" +
-                        "env.popLocalFrame(NULL);" +
-                        "throw new Error(descriptionStr);" +
+                    "env.exceptionClear();" +
+                    "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
+                    "var descriptionStr = env.stringFromJni(description);" +
+                    "env.popLocalFrame(NULL);" +
+                    "throw new Error(descriptionStr);" +
                     "}" +
                     returnStatements +
-                "}");
+                    "}");
 
                 Object.defineProperty(f, 'holder', {
                     enumerable: true,
@@ -1029,7 +1060,9 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                         if (fn !== null) {
                             implementation = implement(f, fn);
 
-                            var argsSize = argTypes.reduce(function (acc, t) { return acc + t.size; }, 0);
+                            var argsSize = argTypes.reduce(function (acc, t) {
+                                return acc + t.size;
+                            }, 0);
                             if (type === INSTANCE_METHOD) {
                                 argsSize++;
                             }
@@ -1107,7 +1140,9 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
         };
 
         var makeHandleDestructor = function () {
-            var handles = Array.prototype.slice.call(arguments).filter(function (h) { return h !== null; });
+            var handles = Array.prototype.slice.call(arguments).filter(function (h) {
+                return h !== null;
+            });
             return function () {
                 vm.perform(function () {
                     var env = vm.getEnv();
@@ -1131,7 +1166,9 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
             var retType = method.returnType;
             var argTypes = method.argumentTypes;
             var rawRetType = retType.type;
-            var rawArgTypes = argTypes.map(function (t) { return t.type; });
+            var rawArgTypes = argTypes.map(function (t) {
+                return t.type;
+            });
 
             var frameCapacity = 2;
             var argVariableNames = argTypes.map(function (t, i) {
@@ -1173,23 +1210,23 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
             eval("var f = function (" + ["envHandle", "thisHandle"].concat(argVariableNames).join(", ") + ") {" +
                 "var env = new Env(envHandle);" +
                 "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
-                    "console.log('Implementation: nicht okay');" +
-                    "return;" +
+                "console.log('Implementation: nicht okay');" +
+                "return;" +
                 "}" +
                 ((type === INSTANCE_METHOD) ? "var self = new C(C.__handle__, thisHandle);" : "var self = new C(thisHandle, null);") +
                 "try {" +
-                    returnCapture + "fn.call(" + ["self"].concat(callArgs).join(", ") + ");" +
+                returnCapture + "fn.call(" + ["self"].concat(callArgs).join(", ") + ");" +
                 "} catch (e) {" +
-                    "if (typeof e === 'object' && e.hasOwnProperty('$handle')) {" +
-                        "env.throw(e.$handle);" +
-                        "console.log('Fehler bei der Implementation');"+ // TODO
-                        returnNothing +
-                    "} else {" +
-                        "throw e;" +
-                    "}" +
+                "if (typeof e === 'object' && e.hasOwnProperty('$handle')) {" +
+                "env.throw(e.$handle);" +
+                "console.log('Fehler bei der Implementation');" + // TODO
+                returnNothing +
+                "} else {" +
+                "throw e;" +
+                "}" +
                 "}" +
                 returnStatements +
-            "}");
+                "}");
 
             Object.defineProperty(f, 'type', {
                 enumerable: true,
@@ -1380,6 +1417,7 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
                     return result;
                 },
                 toJni: function (strings, env) {
+                    // TODO check javaLangString...
                     var result = env.newObjectArray(strings.length, env.javaLangString().handle, NULL);
                     for (var i = 0; i !== strings.length; i++) {
                         var s = env.newStringUtf(strings[i]);
@@ -1479,6 +1517,7 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
         var attachCurrentThread = null;
         var detachCurrentThread = null;
         var getEnv = null;
+        var gDvm = null;
 
         var initialize = function () {
             // pointer to ```JNIInvokeInterface* JavaVM;```
@@ -1503,30 +1542,110 @@ dvm_dalvik_system_DexFile[3](args, &pResult);```
             detachCurrentThread = new NativeFunction(Memory.readPointer(vtable.add(5 * pointerSize)), 'int32', ['pointer']);
             getEnv = new NativeFunction(Memory.readPointer(vtable.add(6 * pointerSize)), 'int32', ['pointer', 'pointer', 'int32']);
 
+         //   gDvm = new gDvm(api);
+
+
             var ptrgDvm = Memory.readPointer(api.gDvm.add(0));
             var vtable2 = Memory.readPointer(ptrgDvm);
             //attachCurrentThread = new NativeFunction(Memory.readPointer(vtable.add(4 * pointerSize)), 'int32', ['pointer', 'pointer', 'pointer']);
-
-
-            /*
-            # test if a given DvmGlobals object is the real deal
-def isDvmGlobals(gDvm):
-    # TODO: Do we need better heuristics here? At least for the
-    # stackSize it might be unsafe to always assume 16K. But does the
-    # trick for now.
-    if gDvm.stackSize != 16384:
-        return False
-    if not "/system/framework/core.jar" in getString(gDvm.bootClassPathStr)+"":
-        return False
-    if gDvm.heapMaximumSize == 0:
-        return False
-    # TODO: Some more, or even better checks
-    return True
-
-             */
-
-
         };
+        /*
+         const registryBuiltins = {
+         "hasOwnProperty": true,
+         "toJSON": true,
+         "toString": true,
+         "valueOf": true
+         };
+
+         function Registry() {
+         const cachedFields = {};
+         let numCachedFields = 0;
+
+         const registry = Proxy.create({
+         has(name) {
+         if (registryBuiltins[name] !== undefined)
+         return true;
+         return findField(name) !== null;
+         },
+         get(target, name) {
+         switch (name) {
+         case "hasOwnProperty":
+         return this.has;
+         case "toJSON":
+         return toJSON;
+         case "toString":
+         return toString;
+         case "valueOf":
+         return valueOf;
+         default:
+         return getField(name);
+         }
+         },
+         set(target, name, value) {
+         throw new Error("Invalid operation");
+         },
+         enumerate() {
+         return this.keys();
+         },
+         iterate() {
+         const props = this.keys();
+         let i = 0;
+         return {
+         next() {
+         if (i === props.length)
+         throw StopIteration;
+         return props[i++];
+         }
+         };
+         },
+         keys() {
+         let numFields = api.objc_getClassList(NULL, 0);
+         if (numFields !== numCachedFields) {
+         // It's impossible to unregister classes in ObjC, so if the number of
+         // classes hasn't changed, we can assume that the list is up to date.
+         const rawClasses = Memory.alloc(numFields * pointerSize);
+         numFields = api.objc_getClassList(rawClasses, numFields);
+         for (let i = 0; i !== numFields; i++) {
+         const handle = Memory.readPointer(rawClasses.add(i * pointerSize));
+         const name = Memory.readUtf8String(api.class_getName(handle));
+         cachedClasses[name] = handle;
+         }
+         }
+         return Object.keys(cachedFields);
+         }
+         });
+
+         function getField(name) {
+         const fld = findField(name);
+         if (fld === null)
+         throw new Error("Unable to find field '" + name + "'");
+         return fld;
+         }
+
+         function findField(name) {
+         let handle = cachedFields[name];
+         if (handle === undefined)
+         handle = api.objc_lookUpClass(Memory.allocUtf8String(name));
+         if (handle.isNull())
+         return null;
+         return new ObjCObject(handle, true);
+         }
+
+         function toJSON() {
+         return {};
+         }
+
+         function toString() {
+         return "Registry";
+         }
+
+         function valueOf() {
+         return "Registry";
+         }
+
+         return registry;
+         }
+         */
 
         this.perform = function (fn) {
             var env = this.tryGetEnv();
@@ -1748,7 +1867,7 @@ def isDvmGlobals(gDvm):
             return cachedVtable;
         }
 
-         // Reference: http://docs.oracle.com/javase/7/docs/technotes/guides/jni/spec/functions.html for the offset
+        // Reference: http://docs.oracle.com/javase/7/docs/technotes/guides/jni/spec/functions.html for the offset
         function proxy(offset, retType, argTypes, wrapper) {
             var impl = null;
             return function () {
@@ -1827,6 +1946,10 @@ def isDvmGlobals(gDvm):
             return impl(this.handle, ref1, ref2) ? true : false;
         });
 
+        Env.prototype.getObjectClass = proxy(31, 'pointer', ['pointer', 'pointer'], function (impl, obj) {
+            return impl(this.handle, obj);
+        });
+
         Env.prototype.isInstanceOf = proxy(32, 'uint8', ['pointer', 'pointer', 'pointer'], function (impl, obj, klass) {
             return impl(this.handle, obj, klass) ? true : false;
         });
@@ -1853,19 +1976,19 @@ def isDvmGlobals(gDvm):
         });
 
         /*
-        jlong       (*GetLongField)(JNIEnv*, jobject, jfieldID);
-        jfloat      (*GetFloatField)(JNIEnv*, jobject, jfieldID);
-        jdouble     (*GetDoubleField)(JNIEnv*, jobject, jfieldID);
-        void        (*SetObjectField)(JNIEnv*, jobject, jfieldID, jobject);
-        void        (*SetBooleanField)(JNIEnv*, jobject, jfieldID, jboolean);
-        void        (*SetByteField)(JNIEnv*, jobject, jfieldID, jbyte);
-        void        (*SetCharField)(JNIEnv*, jobject, jfieldID, jchar);
-        void        (*SetShortField)(JNIEnv*, jobject, jfieldID, jshort);
-        void        (*SetIntField)(JNIEnv*, jobject, jfieldID, jint);
-        void        (*SetLongField)(JNIEnv*, jobject, jfieldID, jlong);
-        void        (*SetFloatField)(JNIEnv*, jobject, jfieldID, jfloat);
-        void        (*SetDoubleField)(JNIEnv*, jobject, jfieldID, jdouble);
-        */
+         jlong       (*GetLongField)(JNIEnv*, jobject, jfieldID);
+         jfloat      (*GetFloatField)(JNIEnv*, jobject, jfieldID);
+         jdouble     (*GetDoubleField)(JNIEnv*, jobject, jfieldID);
+         void        (*SetObjectField)(JNIEnv*, jobject, jfieldID, jobject);
+         void        (*SetBooleanField)(JNIEnv*, jobject, jfieldID, jboolean);
+         void        (*SetByteField)(JNIEnv*, jobject, jfieldID, jbyte);
+         void        (*SetCharField)(JNIEnv*, jobject, jfieldID, jchar);
+         void        (*SetShortField)(JNIEnv*, jobject, jfieldID, jshort);
+         void        (*SetIntField)(JNIEnv*, jobject, jfieldID, jint);
+         void        (*SetLongField)(JNIEnv*, jobject, jfieldID, jlong);
+         void        (*SetFloatField)(JNIEnv*, jobject, jfieldID, jfloat);
+         void        (*SetDoubleField)(JNIEnv*, jobject, jfieldID, jdouble);
+         */
 
         Env.prototype.getStaticMethodId = proxy(113, 'pointer', ['pointer', 'pointer', 'pointer', 'pointer'], function (impl, klass, name, sig) {
             return impl(this.handle, klass, Memory.allocUtf8String(name), Memory.allocUtf8String(sig));
@@ -1988,7 +2111,8 @@ def isDvmGlobals(gDvm):
             if (javaLangObject === null) {
                 var handle = this.findClass("java/lang/Object");
                 javaLangObject = {
-                    toString: this.getMethodId(handle, "toString", "()Ljava/lang/String;")
+                    toString: this.getMethodId(handle, "toString", "()Ljava/lang/String;"),
+                    getClass: this.getMethodId(handle, "getClass", "()Ljava/lang/Class;")
                 };
                 this.deleteLocalRef(handle);
             }
@@ -2075,6 +2199,19 @@ def isDvmGlobals(gDvm):
             return javaLangReflectGenericArrayType;
         };
 
+        var javaLangString = null;
+        Env.prototype.javaLangString = function () {
+            if (javaLangString === null) {
+                var handle = this.findClass("java/lang/String");
+                javaLangString = {
+                    handle: register(this.newGlobalRef(handle))
+                   // getGenericComponentType: this.getMethodId(handle, "getGenericComponentType", "()Ljava/lang/reflect/Type;")
+                };
+                this.deleteLocalRef(handle);
+            }
+            return javaLangString;
+        };
+
         Env.prototype.getClassName = function (klass) {
             var name = this.method('pointer', [])(this.handle, klass, this.javaLangClass().getName);
             var result = this.stringFromJni(name);
@@ -2085,8 +2222,8 @@ def isDvmGlobals(gDvm):
         Env.prototype.getTypeName = function (type) {
             if (this.isInstanceOf(type, this.javaLangClass().handle)) {
                 return this.getClassName(type);
-            // } else if (this.isInstanceOf(type, this.javaLangReflectGenericArrayType().handle)) {
-            //     return "L";
+                // } else if (this.isInstanceOf(type, this.javaLangReflectGenericArrayType().handle)) {
+                //     return "L";
             } else {
                 return "java.lang.Object";
             }
@@ -2121,7 +2258,7 @@ def isDvmGlobals(gDvm):
                 functions: {
                     // Object* dvmDecodeIndirectRef(Thread* self, jobject jobj);
                     "_Z20dvmDecodeIndirectRefP6ThreadP8_jobject": ["dvmDecodeIndirectRef", 'pointer', ['pointer', 'pointer']],
-                     // void dvmUseJNIBridge(Method* method, void* func);
+                    // void dvmUseJNIBridge(Method* method, void* func);
                     "_Z15dvmUseJNIBridgeP6MethodPv": ["dvmUseJNIBridge", 'void', ['pointer', 'pointer']],
                     // ClassObject* dvmFindLoadedClass(const char* descriptor);
                     "_Z18dvmFindLoadedClassPKc": ["dvmFindLoadedClass", 'pointer', ['pointer']],
@@ -2135,10 +2272,10 @@ def isDvmGlobals(gDvm):
                     // TODO dvm_dalvik_system_DexFile for loading dex files
                     //"": ["dvm_dalvik_system_DexFile", '', []]
 
-                   /* Retrieve the system (a/k/a application) class loader.
-                    * The caller must call dvmReleaseTrackedAlloc on the result.
-                    * Object* dvmGetSystemClassLoader() */
-                    "_Z23dvmGetSystemClassLoaderv": ["dvmGetSystemClassLoader", 'pointer',[]],
+                    /* Retrieve the system (a/k/a application) class loader.
+                     * The caller must call dvmReleaseTrackedAlloc on the result.
+                     * Object* dvmGetSystemClassLoader() */
+                    "_Z23dvmGetSystemClassLoaderv": ["dvmGetSystemClassLoader", 'pointer', []],
 
                     /* Get the method currently being executed by examining the interp stack.
                      * const Method* dvmGetCurrentJNIMethod();

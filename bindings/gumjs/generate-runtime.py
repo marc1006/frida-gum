@@ -33,7 +33,7 @@ def write_code(js_code, sink):
     NULL_TERMINATOR_SIZE = 1
     MAX_CHARACTER_SIZE = 4
     # MSVC's limit is roughly 65535 bytes, but we'll play it safe
-    MAX_LITERAL_SIZE = 32768
+    MAX_LITERAL_SIZE = 65535
 
     # MSVC's individual quoted string limit is 2048 bytes
     assert MAX_LINE_LENGTH <= 2048 / MAX_CHARACTER_SIZE
