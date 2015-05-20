@@ -146,6 +146,26 @@
             }
         });
 
+        Object.defineProperty(this, 'heapSourceBase', {
+            enumerable: true,
+            get: function () {
+                if (api === null) {
+                    throw new Error("Dalvik runtime not available");
+                }
+                return api.dvmHeapSourceGetBase();
+            }
+        });
+
+        Object.defineProperty(this, 'heapSourceLimit', {
+            enumerable: true,
+            get: function () {
+                if (api === null) {
+                    throw new Error("Dalvik runtime not available");
+                }
+                return api.dvmHeapSourceGetLimit();
+            }
+        });
+
         this.perform = function (fn) {
             if (api === null) {
                 throw new Error("Dalvik runtime not available");
@@ -218,7 +238,7 @@
 
         // flag: 0 = only class names, 1 = also class details
         this.dumpAllClassesToLogcat = function (flag) {
-            if (flag === 0 || flagg === 1) {
+            if (flag === 0 || flag === 1) {
                 api.dvmDumpAllClasses(flag);
                 return true;
             } else {
@@ -1542,7 +1562,7 @@
             detachCurrentThread = new NativeFunction(Memory.readPointer(vtable.add(5 * pointerSize)), 'int32', ['pointer']);
             getEnv = new NativeFunction(Memory.readPointer(vtable.add(6 * pointerSize)), 'int32', ['pointer', 'pointer', 'int32']);
 
-         //   gDvm = new gDvm(api);
+            //   gDvm = new gDvm(api);
 
 
             var ptrgDvm = Memory.readPointer(api.gDvm.add(0));
@@ -2205,7 +2225,7 @@
                 var handle = this.findClass("java/lang/String");
                 javaLangString = {
                     handle: register(this.newGlobalRef(handle))
-                   // getGenericComponentType: this.getMethodId(handle, "getGenericComponentType", "()Ljava/lang/reflect/Type;")
+                    // getGenericComponentType: this.getMethodId(handle, "getGenericComponentType", "()Ljava/lang/reflect/Type;")
                 };
                 this.deleteLocalRef(handle);
             }
@@ -2288,7 +2308,18 @@
                     "_Z17dvmDumpAllClassesi": ["dvmDumpAllClasses", 'void', ['int32']],
 
                     // void dvmDumpClass(const ClassObject* clazz, int flags);
-                    "_Z12dvmDumpClassPK11ClassObjecti": ["dvmDumpClass", 'void', ['pointer', 'int32']]
+                    "_Z12dvmDumpClassPK11ClassObjecti": ["dvmDumpClass", 'void', ['pointer', 'int32']],
+
+                    /*
+                     * Gets the begining of the allocation for the HeapSource.
+                     */
+                    "_Z20dvmHeapSourceGetBasev": ["dvmHeapSourceGetBase", 'pointer', []],
+
+                    /*
+                     * Returns a high water mark, between base and limit all objects must have been
+                     * allocated.
+                     */
+                    "_Z21dvmHeapSourceGetLimitv": ["dvmHeapSourceGetLimit", 'pointer', []]
                 },
                 // Reference: http://osxr.org/android/source/dalvik/vm/Globals.h
                 variables: {
