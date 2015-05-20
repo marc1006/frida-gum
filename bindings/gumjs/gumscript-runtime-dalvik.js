@@ -146,6 +146,14 @@
             }
         });
 
+        Object.defineProperty(this, 'getApplicationContext', {
+            enumerable: true,
+            get: function () {
+                var currentApplication = Dalvik.use("android.app.ActivityThread").currentApplication();
+                return currentApplication.getApplicationContext();
+            }
+        });
+
         this.perform = function (fn) {
             if (api === null) {
                 throw new Error("Dalvik runtime not available");
@@ -218,7 +226,7 @@
 
         // flag: 0 = only class names, 1 = also class details
         this.dumpAllClassesToLogcat = function (flag) {
-            if (flag === 0 || flagg === 1) {
+            if (flag === 0 || flag === 1) {
                 api.dvmDumpAllClasses(flag);
                 return true;
             } else {
@@ -304,14 +312,23 @@
             if (obj instanceof NativePointer) {
                 var env = vm.getEnv();
                 var jklass = env.getObjectClass(obj);
-                var clsObj = env.method('pointer', [])(env.handle, jklass, env.javaLangObject().getClass);
-                var cls = env.getObjectClass(clsObj);
-                var mid = env.method('pointer', [])(env.handle, cls, env.javaLangClass().getName);
-                var clsStr = env.stringFromJni(mid);
+                var invokeObjectMethodNoArgs = env.method('pointer', []);
+
+                var stringObj = invokeObjectMethodNoArgs(env.handle, jklass, env.javaLangClass().getName);
+                var clsStr = env.stringFromJni(stringObj);
+                /*
+                 // first get the class object
+                 var classObj = invokeObjectMethodNoArgs(env.handle, jklass, env.javaLangObject().getClass);
+
+                 // now get the descriptor of it
+                 var cls = env.getObjectClass(classObj);
+                 var stringObj = invokeObjectMethodNoArgs(env.handle, cls, env.javaLangClass().getName);
+                 var clsStr = env.stringFromJni(stringObj);
+                 env.deleteLocalRef(classObj);
+                 env.deleteLocalRef(cls);
+                 */
                 env.deleteLocalRef(jklass);
-                env.deleteLocalRef(clsObj);
-                env.deleteLocalRef(cls);
-                env.deleteLocalRef(mid);
+                env.deleteLocalRef(stringObj);
                 //this.deleteLocalRef(throwable);
                 return clsStr;
             } else {
@@ -1542,7 +1559,7 @@
             detachCurrentThread = new NativeFunction(Memory.readPointer(vtable.add(5 * pointerSize)), 'int32', ['pointer']);
             getEnv = new NativeFunction(Memory.readPointer(vtable.add(6 * pointerSize)), 'int32', ['pointer', 'pointer', 'int32']);
 
-         //   gDvm = new gDvm(api);
+            //   gDvm = new gDvm(api);
 
 
             var ptrgDvm = Memory.readPointer(api.gDvm.add(0));
@@ -2205,7 +2222,7 @@
                 var handle = this.findClass("java/lang/String");
                 javaLangString = {
                     handle: register(this.newGlobalRef(handle))
-                   // getGenericComponentType: this.getMethodId(handle, "getGenericComponentType", "()Ljava/lang/reflect/Type;")
+                    // getGenericComponentType: this.getMethodId(handle, "getGenericComponentType", "()Ljava/lang/reflect/Type;")
                 };
                 this.deleteLocalRef(handle);
             }
