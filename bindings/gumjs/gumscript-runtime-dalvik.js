@@ -154,6 +154,26 @@
             }
         });
 
+      Object.defineProperty(this, 'heapSourceBase', {
+            enumerable: true,
+            get: function () {
+                if (api === null) {
+                    throw new Error("Dalvik runtime not available");
+                }
+                return api.dvmHeapSourceGetBase();
+            }
+        });
+
+        Object.defineProperty(this, 'heapSourceLimit', {
+            enumerable: true,
+            get: function () {
+                if (api === null) {
+                    throw new Error("Dalvik runtime not available");
+                }
+                return api.dvmHeapSourceGetLimit();
+            }
+        });
+
         this.perform = function (fn) {
             if (api === null) {
                 throw new Error("Dalvik runtime not available");
@@ -2305,7 +2325,18 @@
                     "_Z17dvmDumpAllClassesi": ["dvmDumpAllClasses", 'void', ['int32']],
 
                     // void dvmDumpClass(const ClassObject* clazz, int flags);
-                    "_Z12dvmDumpClassPK11ClassObjecti": ["dvmDumpClass", 'void', ['pointer', 'int32']]
+                    "_Z12dvmDumpClassPK11ClassObjecti": ["dvmDumpClass", 'void', ['pointer', 'int32']],
+
+                    /*
+                     * Gets the begining of the allocation for the HeapSource.
+                     */
+                    "_Z20dvmHeapSourceGetBasev": ["dvmHeapSourceGetBase", 'pointer', []],
+
+                    /*
+                     * Returns a high water mark, between base and limit all objects must have been
+                     * allocated.
+                     */
+                    "_Z21dvmHeapSourceGetLimitv": ["dvmHeapSourceGetLimit", 'pointer', []]
                 },
                 // Reference: http://osxr.org/android/source/dalvik/vm/Globals.h
                 variables: {
