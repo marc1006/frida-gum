@@ -28,7 +28,6 @@
 
 #define GUM_SCRIPT_V8_FLAGS \
     "--es-staging " \
-    "--harmony-classes " \
     "--harmony-arrays " \
     "--harmony-array-includes " \
     "--harmony-regexps " \

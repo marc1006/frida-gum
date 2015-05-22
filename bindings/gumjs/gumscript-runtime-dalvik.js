@@ -1,68 +1,69 @@
-/*
- * TODO:
- *  - Adjust usage to ```instance.field.value``` and ```instance.field.value = ...```. For now it's ```instance.field()```
- *  - Create setter
- *  - Create Java-source "template"
- *  - Find instance pointer in heap
- *  - Find und handle ```DvmGlobals```
- *  - Rename classes, fields and methods (for deobfuscation)
- */
-
-/* Reference:
- * - https://www.mulliner.org/android/feed/mulliner_ddi_30c3.pdf
- * - https://www1.informatik.uni-erlangen.de/filepool/publications/Live_Memory_Forensics_on_Android_with_Volatility.pdf
-
- Load dex files:
- * dexstuff_loaddex()
- * dexstuff_defineclass()
-
- Important own functions:
- * function proxy(offset, retType, argTypes, wrapper);
-
- How to get proxy offset:
- * http://osxr.org/android/source/libnativehelper/include/nativehelper/jni.h
- * http://docs.oracle.com/javase/7/docs/technotes/guides/jni/spec/functions.html for the offset
-
- Methods to use:
- * findClass(...)
- * Usage for Static Fields:
- - PUBLIC: this.getStaticIntField(handle, this.getStaticFieldId(handle, "PUBLIC", "I")),
-
- Code snippets:
- * Replace classes
- ```args[0].l = “PATH/classes.dex”; // must be a string object 
- cookie = dvm_dalvik_system_DexFile[0](args, &pResult);
- // get class loader
- Method *m = dvmGetCurrentJNIMethod();
- // define class
- u4 args[] = { 
-   “org.mulliner.collin.work”, // class name (string object)
-   m­>clazz­>classLoader,      // class loader
-   cookie                      // use DEX file loaded above  
- };
- dvm_dalvik_system_DexFile[3](args, &pResult);```
-
- * Example usage
- ```cls = dvmFindLoadedClass(“Ljava/lang/String;”);
- met = dvmFindVirtualMethodHierByDescriptor(cls, “compareTo”,
-                                   “(Ljava/lang/String;)I”);```
- * Dump list of loaded classes in current VM
- – Useful to find out which system process runs a specific
- framework service
- ```// level  0 = only class names 1 = class details
- dvmDumpAllClasses(level);
- ```
- * Dump details of specific class: All methods (incl. signature), fields, etc...
- ```cls = dvmFindLoadedClass(“Lorg/mulliner/collin/work”);
- dvmDumpClass(cls, 1);```
- */
-
 (function () {
-    "use strict;"
+    "use strict";
+
+    /*
+     * TODO:
+     *  - Adjust usage to ```instance.field.value``` and ```instance.field.value = ...```. For now it's ```instance.field()```
+     *  - Create setter
+     *  - Create Java-source "template"
+     *  - Find instance pointer in heap
+     *  - Find und handle ```DvmGlobals```
+     *  - Rename classes, fields and methods (for deobfuscation)
+     */
+
+    /* Reference:
+     * - https://www.mulliner.org/android/feed/mulliner_ddi_30c3.pdf
+     * - https://www1.informatik.uni-erlangen.de/filepool/publications/Live_Memory_Forensics_on_Android_with_Volatility.pdf
+
+     Load dex files:
+     * dexstuff_loaddex()
+     * dexstuff_defineclass()
+
+     Important own functions:
+     * function proxy(offset, retType, argTypes, wrapper);
+
+     How to get proxy offset:
+     * http://osxr.org/android/source/libnativehelper/include/nativehelper/jni.h
+     * http://docs.oracle.com/javase/7/docs/technotes/guides/jni/spec/functions.html for the offset
+
+     Methods to use:
+     * findClass(...)
+     * Usage for Static Fields:
+     - PUBLIC: this.getStaticIntField(handle, this.getStaticFieldId(handle, "PUBLIC", "I")),
+
+     Code snippets:
+     * Replace classes
+     ```args[0].l = “PATH/classes.dex”; // must be a string object 
+     cookie = dvm_dalvik_system_DexFile[0](args, &pResult);
+     // get class loader
+     Method *m = dvmGetCurrentJNIMethod();
+     // define class
+     u4 args[] = { 
+       “org.mulliner.collin.work”, // class name (string object)
+       m­>clazz­>classLoader,      // class loader
+       cookie                      // use DEX file loaded above  
+     };
+     dvm_dalvik_system_DexFile[3](args, &pResult);```
+
+     * Example usage
+     ```cls = dvmFindLoadedClass(“Ljava/lang/String;”);
+     met = dvmFindVirtualMethodHierByDescriptor(cls, “compareTo”,
+                                       “(Ljava/lang/String;)I”);```
+     * Dump list of loaded classes in current VM
+     – Useful to find out which system process runs a specific
+     framework service
+     ```// level  0 = only class names 1 = class details
+     dvmDumpAllClasses(level);
+     ```
+     * Dump details of specific class: All methods (incl. signature), fields, etc...
+     ```cls = dvmFindLoadedClass(“Lorg/mulliner/collin/work”);
+     dvmDumpClass(cls, 1);```
+     */
+
     var _runtime = null;
     var _api = null;
-    var pointerSize = Process.pointerSize;
-    var scratchBuffer = Memory.alloc(pointerSize);
+    const pointerSize = Process.pointerSize;
+    const scratchBuffer = Memory.alloc(pointerSize);
     /* no error */
     var JNI_OK = 0;
     /* generic error */
@@ -228,6 +229,45 @@
 
         this.getObjectClassname = function (obj) {
             return classFactory.getObjectClassname(obj);
+        };
+
+        this.getLoadedClassesSync = function () {
+            if (this.available) {
+                const i = 172; // 188
+                var bla = 8;
+                var ptrLoadedClassesHashtable = api.gDvm.add(i);
+                var hashTable = Memory.readPointer(ptrLoadedClassesHashtable);
+                var tableSize = Memory.readS32(hashTable);
+                var ptrpEntries = hashTable.add(12);
+                var pEntries = Memory.readPointer(ptrpEntries);
+
+                var loadedClasses = [];
+
+                for (var offset = 0; offset < tableSize * bla; offset += bla) {
+                    try {
+                        var pEntriePtr = pEntries.add(offset);
+                        var hashValue = Memory.readS32(pEntriePtr);
+                        if (hashValue !== 0) {
+                            var data = Memory.readPointer(pEntriePtr.add(4));
+                            var objectSize = Memory.readU32(data.add(56));
+                            var descriptionPtr = Memory.readPointer(data.add(24));
+                            var description = Memory.readCString(descriptionPtr);
+                            var sourceFile = Memory.readCString(Memory.readPointer(data.add(152)));
+                            loadedClasses.push({
+                                pointer: pEntriePtr,
+                                objectSize: objectSize,
+                                sourceFile: sourceFile,
+                                description: description
+                            });
+                            //console.log(pEntriePtr + '\t' + objectSize + '\t' + sourceFile + '\t\t\t' + description);
+                        }
+                    } catch (ex) {
+                    }
+                }
+                return loadedClasses;
+            } else {
+                throw new Error("Dalvik runtime not available");
+            }
         };
 
         // Reference: http://stackoverflow.com/questions/2848575/how-to-detect-ui-thread-on-android
@@ -560,7 +600,7 @@
                     "targetFieldId"
                 ];
 
-                var returnCapture, returnStatement;
+                var returnCapture, returnStatements;
                 if (rawFieldType === 'void') {
                     throw new Error("Should not be the case");
                 }
@@ -568,12 +608,12 @@
                 if (fieldType.fromJni) {
                     frameCapacity++;
                     returnCapture = "var rawResult = ";
-                    returnStatement = "var result = fieldType.fromJni.call(this, rawResult, env);" +
+                    returnStatements = "var result = fieldType.fromJni.call(this, rawResult, env);" +
                         "env.popLocalFrame(NULL);" +
                         "return result;"
                 } else {
                     returnCapture = "var result = ";
-                    returnStatement = "env.popLocalFrame(NULL);" +
+                    returnStatements = "env.popLocalFrame(NULL);" +
                         "return result;"
                 }
 
@@ -602,7 +642,7 @@
                     "env.popLocalFrame(NULL);" +
                     "throw new Error(descriptionStr);" +
                     "}" +
-                    returnStatement +
+                    returnStatements +
                     "}");
 
                 /*
@@ -677,7 +717,6 @@
                 var implementation = null;
                 var synchronizeVtable = function (env) {
                     return;
-
                 };
 
                 return f;
@@ -1218,7 +1257,7 @@
                 }
                 return argVariableNames[i];
             });
-            var returnCapture, returnStatement, returnNothing;
+            var returnCapture, returnStatements, returnNothing;
             if (rawRetType === 'void') {
                 returnCapture = "";
                 returnStatements = "env.popLocalFrame(NULL);";
