@@ -154,7 +154,7 @@
             }
         });
 
-      Object.defineProperty(this, 'heapSourceBase', {
+        Object.defineProperty(this, 'heapSourceBase', {
             enumerable: true,
             get: function () {
                 if (api === null) {
@@ -1234,6 +1234,7 @@
                     } else {
                         returnStatements = "var rawResult = retType.toJni.call(this, result, env);" +
                             "env.popLocalFrame(NULL);" +
+                            "console.log(rawResult);" +
                             "return rawResult;";
                         returnNothing = "return 0;";
                     }
@@ -1252,6 +1253,7 @@
                 "}" +
                 ((type === INSTANCE_METHOD) ? "var self = new C(C.__handle__, thisHandle);" : "var self = new C(thisHandle, null);") +
                 "try {" +
+                "console.log('" + returnCapture + "fn.call(" + ["self"].concat(callArgs).join(", ") + ");" + "');" +
                 returnCapture + "fn.call(" + ["self"].concat(callArgs).join(", ") + ");" +
                 "} catch (e) {" +
                 "if (typeof e === 'object' && e.hasOwnProperty('$handle')) {" +
@@ -1262,6 +1264,7 @@
                 "throw e;" +
                 "}" +
                 "}" +
+                "console.log('" + returnStatements + "');" +
                 returnStatements +
                 "}");
 
