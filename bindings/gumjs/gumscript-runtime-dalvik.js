@@ -2,7 +2,7 @@
     "use strict";
 
     /*
-     * TODO:
+     * TODO
      *  - Adjust usage to ```instance.field.value``` and ```instance.field.value = ...```. For now it's ```instance.field()```
      *  - Create setter
      *  - Create Java-source "template"
@@ -60,51 +60,51 @@
      dvmDumpClass(cls, 1);```
      */
 
-    var _runtime = null;
-    var _api = null;
+    let _runtime = null;
+    let _api = null;
     const pointerSize = Process.pointerSize;
     const scratchBuffer = Memory.alloc(pointerSize);
     /* no error */
-    var JNI_OK = 0;
+    const JNI_OK = 0;
     /* generic error */
-    var JNI_ERR = -1;
+    const JNI_ERR = -1;
     /* thread detached from the VM */
-    var JNI_EDETACHED = -2;
+    const JNI_EDETACHED = -2;
     /* JNI version error */
-    var JNI_VERSION = -3;
+    const JNI_VERSION = -3;
 
-    var JNI_VERSION_1_6 = 0x00010006;
+    const JNI_VERSION_1_6 = 0x00010006;
 
-    var CONSTRUCTOR_METHOD = 1;
-    var STATIC_METHOD = 2;
-    var INSTANCE_METHOD = 3;
+    const CONSTRUCTOR_METHOD = 1;
+    const STATIC_METHOD = 2;
+    const INSTANCE_METHOD = 3;
 
     // fields
-    var STATIC_FIELD = 1;
-    var INSTANCE_FIELD = 2;
+    const STATIC_FIELD = 1;
+    const INSTANCE_FIELD = 2;
 
     // android/source/dalvik/vm/Hash.h
     // invalid ptr value
-    var HASH_TOMBSTONE = 0xcbcacccd;
+    const HASH_TOMBSTONE = 0xcbcacccd;
 
     // TODO: 64-bit
-    var JNI_ENV_OFFSET_SELF = 12;
+    const JNI_ENV_OFFSET_SELF = 12;
 
-    var CLASS_OBJECT_SIZE = 160;
-    var CLASS_OBJECT_OFFSET_VTABLE_COUNT = 112;
-    var CLASS_OBJECT_OFFSET_VTABLE = 116;
+    const CLASS_OBJECT_SIZE = 160;
+    const CLASS_OBJECT_OFFSET_VTABLE_COUNT = 112;
+    const CLASS_OBJECT_OFFSET_VTABLE = 116;
 
-    var OBJECT_OFFSET_CLAZZ = 0;
+    const OBJECT_OFFSET_CLAZZ = 0;
 
-    var METHOD_SIZE = 56;
-    var METHOD_OFFSET_CLAZZ = 0;
-    var METHOD_OFFSET_ACCESS_FLAGS = 4;
-    var METHOD_OFFSET_METHOD_INDEX = 8;
-    var METHOD_OFFSET_REGISTERS_SIZE = 10;
-    var METHOD_OFFSET_OUTS_SIZE = 12;
-    var METHOD_OFFSET_INS_SIZE = 14;
-    var METHOD_OFFSET_INSNS = 32;
-    var METHOD_OFFSET_JNI_ARG_INFO = 36;
+    const METHOD_SIZE = 56;
+    const METHOD_OFFSET_CLAZZ = 0;
+    const METHOD_OFFSET_ACCESS_FLAGS = 4;
+    const METHOD_OFFSET_METHOD_INDEX = 8;
+    const METHOD_OFFSET_REGISTERS_SIZE = 10;
+    const METHOD_OFFSET_OUTS_SIZE = 12;
+    const METHOD_OFFSET_INS_SIZE = 14;
+    const METHOD_OFFSET_INSNS = 32;
+    const METHOD_OFFSET_JNI_ARG_INFO = 36;
 
     Object.defineProperty(this, 'Dalvik', {
         enumerable: true,
@@ -117,10 +117,10 @@
     });
 
     var Runtime = function Runtime() {
-        var api = null;
-        var vm = null;
-        var classFactory = null;
-        var pending = [];
+        let api = null;
+        let vm = null;
+        let classFactory = null;
+        let pending = [];
 
         var initialize = function () {
             api = getApi();
@@ -147,6 +147,10 @@
             }
         });
 
+        this.api = function(){
+            return api;
+        };
+
         Object.defineProperty(this, 'getApplicationContext', {
             enumerable: true,
             get: function () {
@@ -158,7 +162,7 @@
         Object.defineProperty(this, 'heapSourceBase', {
             enumerable: true,
             get: function () {
-                if (api === null) {
+                if (!this.available) {
                     throw new Error("Dalvik runtime not available");
                 }
                 return api.dvmHeapSourceGetBase();
@@ -168,7 +172,7 @@
         Object.defineProperty(this, 'heapSourceLimit', {
             enumerable: true,
             get: function () {
-                if (api === null) {
+                if (!this.available) {
                     throw new Error("Dalvik runtime not available");
                 }
                 return api.dvmHeapSourceGetLimit();
@@ -176,7 +180,7 @@
         });
 
         this.perform = function (fn) {
-            if (api === null) {
+            if (!this.available) {
                 throw new Error("Dalvik runtime not available");
             }
 
@@ -231,8 +235,12 @@
             return classFactory.getObjectClassname(obj);
         };
 
-        this.getLoadedClassesSync = function () {
-            if (this.available) {
+        var cacheLoadedClasses = [];
+        this.getLoadedClassesSync = function (renewCache) {
+            renewCache = renewCache || false;
+            if (!renewCache && cacheLoadedClasses.length > 0) {
+                return cacheLoadedClasses;
+            } else if (this.available) {
                 const i = 172; // 188
                 var bla = 8;
                 var ptrLoadedClassesHashtable = api.gDvm.add(i);
@@ -259,11 +267,11 @@
                                 sourceFile: sourceFile,
                                 description: description
                             });
-                            //console.log(pEntriePtr + '\t' + objectSize + '\t' + sourceFile + '\t\t\t' + description);
                         }
                     } catch (ex) {
                     }
                 }
+                cacheLoadedClasses = loadedClasses;
                 return loadedClasses;
             } else {
                 throw new Error("Dalvik runtime not available");
@@ -344,14 +352,14 @@
         });
 
         this.use = function (className) {
-            var C = classes[className];
+            let C = classes[className];
             if (!C) {
-                var env = vm.getEnv();
+                let env = vm.getEnv();
                 if (loader !== null) {
-                    var klassObj = loader.loadClass(className);
+                    let klassObj = loader.loadClass(className);
                     C = ensureClass(klassObj.$handle, className);
                 } else {
-                    var handle = env.findClass(className.replace(/\./g, "/"));
+                    let handle = env.findClass(className.replace(/\./g, "/"));
                     try {
                         C = ensureClass(handle, className);
                     } finally {
@@ -424,7 +432,7 @@
 
             classes[name] = klass;
 
-            var initializeClass = function initializeClass() {
+            function initializeClass() {
                 klass.__name__ = name;
                 klass.__handle__ = env.newGlobalRef(classHandle);
                 klass.__methods__ = [];
@@ -457,7 +465,7 @@
 
                 addMethods();
                 addFields();
-            };
+            }
 
             var dispose = function () {
                 WeakRef.unbind(this.$weakRef);
@@ -507,20 +515,20 @@
             };
 
             var addFields = function () {
-                var invokeObjectMethodNoArgs = env.method('pointer', []);
-                var Field_getName = env.javaLangReflectField().getName;
+                let invokeObjectMethodNoArgs = env.method('pointer', []);
+                let Field_getName = env.javaLangReflectField().getName;
 
-                var fieldHandles = klass.__fields__;
-                var jsFields = {};
+                let fieldHandles = klass.__fields__;
+                let jsFields = {};
 
                 var fields = invokeObjectMethodNoArgs(env.handle, classHandle, env.javaLangClass().getDeclaredFields);
                 var numFields = env.getArrayLength(fields);
-                for (var fieldIndex = 0; fieldIndex !== numFields; fieldIndex++) {
-                    var field = env.getObjectArrayElement(fields, fieldIndex);
-                    var name = invokeObjectMethodNoArgs(env.handle, field, Field_getName);
-                    var jsName = env.stringFromJni(name);
+                for (let fieldIndex = 0; fieldIndex !== numFields; fieldIndex++) {
+                    let field = env.getObjectArrayElement(fields, fieldIndex);
+                    let name = invokeObjectMethodNoArgs(env.handle, field, Field_getName);
+                    let jsName = env.stringFromJni(name);
                     env.deleteLocalRef(name);
-                    var fieldHandle = env.newGlobalRef(field);
+                    let fieldHandle = env.newGlobalRef(field);
                     fieldHandles.push(fieldHandle);
                     env.deleteLocalRef(field);
 
@@ -531,6 +539,7 @@
                 Object.keys(jsFields).forEach(function (name) {
                     var m = null;
                     Object.defineProperty(klass.prototype, name, {
+                        enumerable: true,
                         get: function () {
                             if (m === null) {
                                 vm.perform(function () {
@@ -546,21 +555,21 @@
                 });
             };
 
-            var makeField = function (name, handle, env) {
-                var Field = env.javaLangReflectField();
-                var Modifier = env.javaLangReflectModifier();
-                var invokeObjectMethodNoArgs = env.method('pointer', []);
-                var invokeIntMethodNoArgs = env.method('int32', []);
-                var invokeUInt8MethodNoArgs = env.method('uint8', []);
+            let makeField = function (name, handle, env) {
+                let Field = env.javaLangReflectField();
+                let Modifier = env.javaLangReflectModifier();
+                let invokeObjectMethodNoArgs = env.method('pointer', []);
+                let invokeIntMethodNoArgs = env.method('int32', []);
+                let invokeUInt8MethodNoArgs = env.method('uint8', []);
 
-                var fieldId = env.fromReflectedField(handle);
-                var fieldType = invokeObjectMethodNoArgs(env.handle, handle, Field.getGenericType);
-                var modifiers = invokeIntMethodNoArgs(env.handle, handle, Field.getModifiers);
+                let fieldId = env.fromReflectedField(handle);
+                let fieldType = invokeObjectMethodNoArgs(env.handle, handle, Field.getGenericType);
+                let modifiers = invokeIntMethodNoArgs(env.handle, handle, Field.getModifiers);
 
                 // TODO there should be the opportunity to see the modifiers
-                var jsType = (modifiers & Modifier.STATIC) !== 0 ? STATIC_FIELD : INSTANCE_FIELD;
+                let jsType = (modifiers & Modifier.STATIC) !== 0 ? STATIC_FIELD : INSTANCE_FIELD;
 
-                var jsFieldType;
+                let jsFieldType;
 
                 try {
                     jsFieldType = typeFromClassName(env.getTypeName(fieldType));
@@ -610,14 +619,15 @@
                     returnCapture = "var rawResult = ";
                     returnStatements = "var result = fieldType.fromJni.call(this, rawResult, env);" +
                         "env.popLocalFrame(NULL);" +
-                        "return result;"
+                        "return result;";
                 } else {
                     returnCapture = "var result = ";
                     returnStatements = "env.popLocalFrame(NULL);" +
-                        "return result;"
+                        "return result;";
                 }
 
-                eval("var fu = function () {" +
+                let fu;
+                eval("fu = function () {" +
                     "var isInstance = this.$handle !== null;" +
                     "if (type === INSTANCE_FIELD && isInstance === false) { " +
                     "throw new Error(name + ': cannot get instance field without an instance');" +
@@ -665,7 +675,8 @@
                     //   throw new Error('unable to convert to JNI ' + fieldType);
                 }
 
-                eval("var mu = function (valu) {" +
+                let mu;
+                eval("mu = function (valu) {" +
                     "var isInstance = this.$handle !== null;" +
                     "if (type === INSTANCE_FIELD && isInstance === false) { " +
                     "throw new Error(name + ': cannot set an instance field without an instance');" +
@@ -723,14 +734,14 @@
             };
 
             var addMethods = function () {
-                var invokeObjectMethodNoArgs = env.method('pointer', []);
-                var Method_getName = env.javaLangReflectMethod().getName;
+                let invokeObjectMethodNoArgs = env.method('pointer', []);
+                let Method_getName = env.javaLangReflectMethod().getName;
 
-                var methodHandles = klass.__methods__;
-                var jsMethods = {};
+                let methodHandles = klass.__methods__;
+                let jsMethods = {};
 
-                var methods = invokeObjectMethodNoArgs(env.handle, classHandle, env.javaLangClass().getDeclaredMethods);
-                var numMethods = env.getArrayLength(methods);
+                let methods = invokeObjectMethodNoArgs(env.handle, classHandle, env.javaLangClass().getDeclaredMethods);
+                let numMethods = env.getArrayLength(methods);
                 for (var methodIndex = 0; methodIndex !== numMethods; methodIndex++) {
                     var method = env.getObjectArrayElement(methods, methodIndex);
                     var name = invokeObjectMethodNoArgs(env.handle, method, Method_getName);
@@ -753,6 +764,7 @@
                 Object.keys(jsMethods).forEach(function (name) {
                     var m = null;
                     Object.defineProperty(klass.prototype, name, {
+                        enumerable: true,
                         get: function () {
                             if (m === null) {
                                 vm.perform(function () {
@@ -1038,7 +1050,9 @@
                             "return result;";
                     }
                 }
-                eval("var f = function (" + argVariableNames.join(", ") + ") {" +
+
+                let f;
+                eval("f = function (" + argVariableNames.join(", ") + ") {" +
                     "var env = vm.getEnv();" +
                     "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
                     "env.exceptionClear();" +
@@ -1284,7 +1298,8 @@
                     returnNothing = "return 0;";
                 }
             }
-            eval("var f = function (" + ["envHandle", "thisHandle"].concat(argVariableNames).join(", ") + ") {" +
+            let f;
+            eval("f = function (" + ["envHandle", "thisHandle"].concat(argVariableNames).join(", ") + ") {" +
                 "var env = new Env(envHandle);" +
                 "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
                 "console.log('Implementation: nicht okay');" +
@@ -1592,11 +1607,11 @@
     };
 
     var VM = function VM(api) {
-        var handle = null;
-        var attachCurrentThread = null;
-        var detachCurrentThread = null;
-        var getEnv = null;
-        var gDvm = null;
+        let handle = null;
+        let attachCurrentThread = null;
+        let detachCurrentThread = null;
+        let getEnv = null;
+        let gDvm = null;
 
         var initialize = function () {
             // pointer to ```JNIInvokeInterface* JavaVM;```
