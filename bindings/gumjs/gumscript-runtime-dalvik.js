@@ -1295,7 +1295,7 @@
                 }
             }
             let f;
-              eval("f = function (" + ["envHandle", "thisHandle"].concat(argVariableNames).join(", ") + ") {" +
+            eval("f = function (" + ["envHandle", "thisHandle"].concat(argVariableNames).join(", ") + ") {" +
                 "var env = new Env(envHandle);" +
                 "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
                     "return;" +
