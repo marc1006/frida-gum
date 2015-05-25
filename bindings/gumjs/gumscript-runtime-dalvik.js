@@ -3,8 +3,7 @@
 
     /*
      * TODO
-     *  - Adjust usage to ```instance.field.value``` and ```instance.field.value = ...```. For now it's ```instance.field()```
-     *  - Create setter
+     *  - JIT... https://github.com/rovo89/Xposed/blob/master/libxposed_dalvik.cpp
      *  - Create Java-source "template"
      *  - Find instance pointer in heap
      *  - Find und handle ```DvmGlobals```
@@ -405,16 +404,16 @@
         };
 
         var ensureClass = function (classHandle, cachedName) {
-            var env = vm.getEnv();
+            let env = vm.getEnv();
 
-            var name = cachedName !== null ? cachedName : env.getClassName(classHandle);
-            var klass = classes[name];
+            let name = cachedName !== null ? cachedName : env.getClassName(classHandle);
+            let klass = classes[name];
             if (klass) {
                 return klass;
             }
 
-            var superHandle = env.getSuperclass(classHandle);
-            var superKlass;
+            let superHandle = env.getSuperclass(classHandle);
+            let superKlass;
             if (!superHandle.isNull()) {
                 superKlass = ensureClass(superHandle, null);
                 env.deleteLocalRef(superHandle);
@@ -438,7 +437,7 @@
                 klass.__methods__ = [];
                 klass.__fields__ = [];
 
-                var ctor = null;
+                let ctor = null;
                 Object.defineProperty(klass.prototype, "$new", {
                     get: function () {
                         if (ctor === null) {
@@ -539,7 +538,6 @@
                 Object.keys(jsFields).forEach(function (name) {
                     var m = null;
                     Object.defineProperty(klass.prototype, name, {
-                        enumerable: true,
                         get: function () {
                             if (m === null) {
                                 vm.perform(function () {
@@ -764,7 +762,6 @@
                 Object.keys(jsMethods).forEach(function (name) {
                     var m = null;
                     Object.defineProperty(klass.prototype, name, {
-                        enumerable: true,
                         get: function () {
                             if (m === null) {
                                 vm.perform(function () {
@@ -1264,14 +1261,14 @@
             var argVariableNames = argTypes.map(function (t, i) {
                 return "a" + (i + 1);
             });
-            var callArgs = argTypes.map(function (t, i) {
+            let callArgs = argTypes.map(function (t, i) {
                 if (t.fromJni) {
                     frameCapacity++;
                     return "argTypes[" + i + "].fromJni.call(self, " + argVariableNames[i] + ", env)";
                 }
                 return argVariableNames[i];
             });
-            var returnCapture, returnStatements, returnNothing;
+            let returnCapture, returnStatements, returnNothing;
             if (rawRetType === 'void') {
                 returnCapture = "";
                 returnStatements = "env.popLocalFrame(NULL);";
@@ -1287,7 +1284,6 @@
                     } else {
                         returnStatements = "var rawResult = retType.toJni.call(this, result, env);" +
                             "env.popLocalFrame(NULL);" +
-                            "console.log(rawResult);" +
                             "return rawResult;";
                         returnNothing = "return 0;";
                     }
@@ -1299,28 +1295,24 @@
                 }
             }
             let f;
-            eval("f = function (" + ["envHandle", "thisHandle"].concat(argVariableNames).join(", ") + ") {" +
+              eval("f = function (" + ["envHandle", "thisHandle"].concat(argVariableNames).join(", ") + ") {" +
                 "var env = new Env(envHandle);" +
                 "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
-                "console.log('Implementation: nicht okay');" +
-                "return;" +
+                    "return;" +
                 "}" +
                 ((type === INSTANCE_METHOD) ? "var self = new C(C.__handle__, thisHandle);" : "var self = new C(thisHandle, null);") +
                 "try {" +
-                "console.log('" + returnCapture + "fn.call(" + ["self"].concat(callArgs).join(", ") + ");" + "');" +
-                returnCapture + "fn.call(" + ["self"].concat(callArgs).join(", ") + ");" +
+                    returnCapture + "fn.call(" + ["self"].concat(callArgs).join(", ") + ");" +
                 "} catch (e) {" +
-                "if (typeof e === 'object' && e.hasOwnProperty('$handle')) {" +
-                "env.throw(e.$handle);" +
-                "console.log('Fehler bei der Implementation');" + // TODO
-                returnNothing +
-                "} else {" +
-                "throw e;" +
+                    "if (typeof e === 'object' && e.hasOwnProperty('$handle')) {" +
+                        "env.throw(e.$handle);" +
+                        returnNothing +
+                    "} else {" +
+                        "throw e;" +
+                    "}" +
                 "}" +
-                "}" +
-                "console.log('" + returnStatements + "');" +
                 returnStatements +
-                "}");
+            "}");
 
             Object.defineProperty(f, 'type', {
                 enumerable: true,
