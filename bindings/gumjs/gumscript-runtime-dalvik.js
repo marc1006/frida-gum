@@ -178,6 +178,73 @@
             }
         });
 
+        function _enumerateLoadedClasses(callbacks, onlyDescription) {
+            if (Dalvik.available) {
+                const hash_tombstone = 0xcbcacccd;
+                const loadedClassesOffset = 172;
+                const hashEntrySize = 8;
+                const ptrLoadedClassesHashtable = api.gDvm.add(loadedClassesOffset);
+                const hashTable = Memory.readPointer(ptrLoadedClassesHashtable);
+                const tableSize = Memory.readS32(hashTable);
+                const ptrpEntries = hashTable.add(12);
+                const pEntries = Memory.readPointer(ptrpEntries);
+                const end = tableSize * hashEntrySize;
+
+                for (let offset = 0; offset < end; offset += hashEntrySize) {
+                    let pEntriePtr = pEntries.add(offset);
+                    let hashValue = Memory.readS32(pEntriePtr);
+                    if (hashValue !== 0) {
+                        let dataPtr = Memory.readPointer(pEntriePtr.add(4));
+                        if (dataPtr !== hash_tombstone) {
+                            let descriptionPtr = Memory.readPointer(dataPtr.add(24));
+                            let description = Memory.readCString(descriptionPtr);
+                            if (onlyDescription) {
+                                callbacks.onMatch(description);
+                            } else {
+                                let objectSize = Memory.readU32(dataPtr.add(56));
+                                let sourceFile = Memory.readCString(Memory.readPointer(dataPtr.add(152)));
+                                callbacks.onMatch({
+                                    pointer: pEntriePtr,
+                                    objectSize: objectSize,
+                                    sourceFile: sourceFile,
+                                    description: description
+                                });
+                            }
+                        }
+                    }
+                }
+                callbacks.onComplete();
+            } else {
+                throw new Error("Dalvik API not available");
+            }
+        }
+
+        Object.defineProperty(this, 'enumerateLoadedClassesSync', {
+            enumerable: true,
+            value: function () {
+                if (api !== null) {
+                    let classes = [];
+                    Dalvik.enumerateLoadedClasses({
+                        onMatch: function (c) {
+                            classes.push(c);
+                        },
+                        onComplete: function () {
+                        }
+                    });
+                    return classes;
+                } else {
+                    throw new Error("Dalvik API not available");
+                }
+            }
+        });
+
+        Object.defineProperty(this, 'enumerateLoadedClasses', {
+            enumerable: true,
+            value: function(callbacks) {
+                _enumerateLoadedClasses(callbacks, true);
+            }
+        });
+
         this.perform = function (fn) {
             if (!this.available) {
                 throw new Error("Dalvik runtime not available");
@@ -234,49 +301,7 @@
             return classFactory.getObjectClassname(obj);
         };
 
-        var cacheLoadedClasses = [];
-        this.getLoadedClassesSync = function (renewCache) {
-            renewCache = renewCache || false;
-            if (!renewCache && cacheLoadedClasses.length > 0) {
-                return cacheLoadedClasses;
-            } else if (this.available) {
-                const i = 172; // 188
-                var bla = 8;
-                var ptrLoadedClassesHashtable = api.gDvm.add(i);
-                var hashTable = Memory.readPointer(ptrLoadedClassesHashtable);
-                var tableSize = Memory.readS32(hashTable);
-                var ptrpEntries = hashTable.add(12);
-                var pEntries = Memory.readPointer(ptrpEntries);
-
-                var loadedClasses = [];
-
-                for (var offset = 0; offset < tableSize * bla; offset += bla) {
-                    try {
-                        var pEntriePtr = pEntries.add(offset);
-                        var hashValue = Memory.readS32(pEntriePtr);
-                        if (hashValue !== 0) {
-                            var data = Memory.readPointer(pEntriePtr.add(4));
-                            var objectSize = Memory.readU32(data.add(56));
-                            var descriptionPtr = Memory.readPointer(data.add(24));
-                            var description = Memory.readCString(descriptionPtr);
-                            var sourceFile = Memory.readCString(Memory.readPointer(data.add(152)));
-                            loadedClasses.push({
-                                pointer: pEntriePtr,
-                                objectSize: objectSize,
-                                sourceFile: sourceFile,
-                                description: description
-                            });
-                        }
-                    } catch (ex) {
-                    }
-                }
-                cacheLoadedClasses = loadedClasses;
-                return loadedClasses;
-            } else {
-                throw new Error("Dalvik runtime not available");
-            }
-        };
-
+     
         // Reference: http://stackoverflow.com/questions/2848575/how-to-detect-ui-thread-on-android
         this.isMainThread = function () {
             if (classFactory.loader === null) {
