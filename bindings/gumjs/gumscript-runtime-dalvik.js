@@ -1406,7 +1406,7 @@
          */
         var types = {
             'boolean': {
-                type: 'uint8',
+                type: 'uint8', //'int32', //'uint8',
                 size: 1,
                 isCompatible: function (v) {
                     return typeof v === 'boolean';
