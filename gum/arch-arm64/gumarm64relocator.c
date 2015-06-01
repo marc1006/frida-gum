@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Ole André Vadla Ravnås <ole.andre.ravnas@tillitech.com>
+ * Copyright (C) 2014-2015 Ole André Vadla Ravnås <ole.andre.ravnas@tillitech.com>
  *
  * Licence: wxWindows Library Licence, Version 3.1
  */
@@ -25,6 +25,8 @@ struct _GumCodeGenCtx
   GumArm64Writer * output;
 };
 
+static gboolean gum_arm64_relocator_rewrite_ldr (GumArm64Relocator * self,
+    GumCodeGenCtx * ctx);
 static gboolean gum_arm64_relocator_rewrite_adr (GumArm64Relocator * self,
     GumCodeGenCtx * ctx);
 static gboolean gum_arm64_relocator_rewrite_unconditional_branch (
@@ -154,6 +156,10 @@ gum_arm64_relocator_read_one (GumArm64Relocator * self,
         g_assert_not_reached ();
     }
   }
+  else if ((raw_insn & 0xff000000) == 0x58000000)
+  {
+    insn->mnemonic = GUM_ARM64_LDR;
+  }
   else
   {
     guint32 adr_bits;
@@ -231,6 +237,9 @@ gum_arm64_relocator_write_one (GumArm64Relocator * self)
 
   switch (ctx.insn->mnemonic)
   {
+    case GUM_ARM64_LDR:
+      rewritten = gum_arm64_relocator_rewrite_ldr (self, &ctx);
+      break;
     case GUM_ARM64_ADR:
     case GUM_ARM64_ADRP:
       rewritten = gum_arm64_relocator_rewrite_adr (self, &ctx);
@@ -333,6 +342,33 @@ gum_arm64_relocator_relocate (gpointer from,
 }
 
 static gboolean
+gum_arm64_relocator_rewrite_ldr (GumArm64Relocator * self,
+                                 GumCodeGenCtx * ctx)
+{
+  GumArm64Reg reg;
+  guint32 imm19;
+  GumAddress absolute_target;
+  union
+  {
+    gint64 i;
+    guint64 u;
+  } distance;
+
+  reg = ctx->raw_insn & 0x1f;
+  imm19 = (ctx->raw_insn >> 5) & 0x7ffff;
+  distance.u = imm19 << 2;
+  if ((imm19 & 0x40000) != 0)
+    distance.u |= G_GUINT64_CONSTANT (0xffffffffffe00000);
+
+  absolute_target = ctx->insn->pc + distance.i;
+
+  gum_arm64_writer_put_ldr_reg_address (ctx->output, reg, absolute_target);
+  gum_arm64_writer_put_ldr_reg_reg_offset (ctx->output, reg, reg, 0);
+
+  return TRUE;
+}
+
+static gboolean
 gum_arm64_relocator_rewrite_adr (GumArm64Relocator * self,
                                  GumCodeGenCtx * ctx)
 {
@@ -360,6 +396,8 @@ gum_arm64_relocator_rewrite_adr (GumArm64Relocator * self,
       distance.u = negative_mask | (imm_hi << 2) | imm_lo;
     else
       distance.u = (imm_hi << 2) | imm_lo;
+
+    absolute_target = ctx->insn->pc + distance.i;
   }
   else if (ctx->insn->mnemonic == GUM_ARM64_ADRP)
   {
@@ -369,6 +407,9 @@ gum_arm64_relocator_rewrite_adr (GumArm64Relocator * self,
       distance.u = negative_mask | (imm_hi << 14) | (imm_lo << 12);
     else
       distance.u = (imm_hi << 14) | (imm_lo << 12);
+
+    absolute_target =
+        (ctx->insn->pc & ~G_GUINT64_CONSTANT (4096 - 1)) + distance.i;
   }
   else
   {
@@ -376,8 +417,6 @@ gum_arm64_relocator_rewrite_adr (GumArm64Relocator * self,
 
     g_assert_not_reached ();
   }
-
-  absolute_target = ctx->insn->pc + distance.i;
 
   gum_arm64_writer_put_ldr_reg_address (ctx->output, reg, absolute_target);
 

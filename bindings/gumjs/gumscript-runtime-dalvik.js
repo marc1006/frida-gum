@@ -592,6 +592,7 @@
                 Object.keys(jsFields).forEach(function (name) {
                     var m = null;
                     Object.defineProperty(klass.prototype, name, {
+                        configurable: true,
                         get: function () {
                             if (m === null) {
                                 vm.perform(function () {
@@ -816,6 +817,7 @@
                 Object.keys(jsMethods).forEach(function (name) {
                     var m = null;
                     Object.defineProperty(klass.prototype, name, {
+                        configurable: true,
                         get: function () {
                             if (m === null) {
                                 vm.perform(function () {
