@@ -8,11 +8,14 @@
 
 TEST_LIST_BEGIN (arm64relocator)
   TESTENTRY (one_to_one)
+  TESTENTRY (ldr_should_be_rewritten)
   TESTENTRY (adr_should_be_rewritten)
   TESTENTRY (adrp_should_be_rewritten)
   TESTENTRY (b_cond_should_be_rewritten)
   TESTENTRY (b_should_be_rewritten)
   TESTENTRY (bl_should_be_rewritten)
+  TESTENTRY (cannot_relocate_with_early_br)
+  TESTENTRY (eob_and_eoi_on_br)
   TESTENTRY (eob_and_eoi_on_ret)
 TEST_LIST_END ()
 
@@ -43,6 +46,36 @@ TESTCASE (one_to_one)
   assert_outbuf_still_zeroed_from_offset (8);
 
   g_assert (!gum_arm64_relocator_write_one (&fixture->rl));
+}
+
+TESTCASE (ldr_should_be_rewritten)
+{
+  const guint32 input[] = {
+    GUINT32_TO_LE (0x58000050)  /* ldr x16, [pc, #8]  */
+  };
+  const guint32 expected_output_instructions[] = {
+    GUINT32_TO_LE (0x58000050), /* ldr x16, [pc, #8]  */
+    GUINT32_TO_LE (0xf9400210), /* ldr x16, [x16]     */
+    0xffffffff,                 /* <calculated PC     */
+    0xffffffff                  /*  goes here>        */
+  };
+  gchar expected_output[4 * sizeof (guint32)];
+  guint64 calculated_pc;
+  const GumArm64Instruction * insn;
+
+  SETUP_RELOCATOR_WITH (input);
+
+  memcpy (expected_output, expected_output_instructions,
+      sizeof (expected_output_instructions));
+  calculated_pc = fixture->rl.input_pc + 8;
+  *((guint64 *) (expected_output + 8)) = GUINT64_TO_LE (calculated_pc);
+
+  g_assert_cmpuint (gum_arm64_relocator_read_one (&fixture->rl, &insn), ==, 4);
+  g_assert_cmpint (insn->mnemonic, ==, GUM_ARM64_LDR);
+  g_assert (gum_arm64_relocator_write_one (&fixture->rl));
+  gum_arm64_writer_flush (&fixture->aw);
+  g_assert_cmpint (memcmp (fixture->output, expected_output,
+      sizeof (expected_output)), ==, 0);
 }
 
 TESTCASE (adr_should_be_rewritten)
@@ -92,7 +125,8 @@ TESTCASE (adrp_should_be_rewritten)
 
   memcpy (expected_output, expected_output_instructions,
       sizeof (expected_output_instructions));
-  calculated_pc = fixture->rl.input_pc + 0x14e6000;
+  calculated_pc =
+      (fixture->rl.input_pc & ~G_GUINT64_CONSTANT (4096 - 1)) + 0x14e6000;
   *((guint64 *) (expected_output + 4)) = GUINT64_TO_LE (calculated_pc);
 
   g_assert_cmpuint (gum_arm64_relocator_read_one (&fixture->rl, &insn), ==, 4);
@@ -202,6 +236,30 @@ branch_scenario_execute (BranchScenario * bs,
   gum_arm64_writer_flush (&fixture->aw);
   g_assert_cmpint (memcmp (fixture->output, bs->expected_output,
       bs->expected_output_length * sizeof (guint32)), ==, 0);
+}
+
+TESTCASE (cannot_relocate_with_early_br)
+{
+  guint32 input[] = {
+    GUINT32_TO_LE (0x58000050), /* ldr x16, [pc, #8] */
+    GUINT32_TO_LE (0xd61f0200)  /* br x16            */
+  };
+
+  g_assert (!gum_arm64_relocator_can_relocate (input, 16));
+}
+
+TESTCASE (eob_and_eoi_on_br)
+{
+  const guint32 input[] = {
+    GUINT32_TO_LE (0xd61f0200)  /* br x16 */
+  };
+
+  SETUP_RELOCATOR_WITH (input);
+
+  g_assert_cmpuint (gum_arm64_relocator_read_one (&fixture->rl, NULL), ==, 4);
+  g_assert (gum_arm64_relocator_eob (&fixture->rl));
+  g_assert (gum_arm64_relocator_eoi (&fixture->rl));
+  g_assert_cmpuint (gum_arm64_relocator_read_one (&fixture->rl, NULL), ==, 0);
 }
 
 TESTCASE (eob_and_eoi_on_ret)
