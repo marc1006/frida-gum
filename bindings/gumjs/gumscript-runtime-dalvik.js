@@ -146,7 +146,7 @@
             }
         });
 
-        this.api = function(){
+        this.api = function () {
             return api;
         };
 
@@ -175,6 +175,35 @@
                     throw new Error("Dalvik runtime not available");
                 }
                 return api.dvmHeapSourceGetLimit();
+            }
+        });
+
+        Object.defineProperty(this, 'gDvm', {
+            enumerable: true,
+            get: function () {
+                if (!this.available) {
+                    throw new Error("Dalvik runtime not available");
+                }
+                return api.gDvm;
+            }
+        });
+
+        Object.defineProperty(this, 'debug', {
+            enumerable: true,
+            get: function (start, end) {
+                if (!this.available) {
+                    throw new Error("Dalvik runtime not available");
+                }
+                const gDvm = api.gDvm;
+                for (let offset = start; offset < end; offset += 1) {
+                    let jdwpAllowed = gDvm.add(offset);
+                    try {
+                        Memory.writeU8(jdwpAllowed, 0x1);
+                    } catch (e) {
+                        // TODO
+                    }
+                }
+                return true;
             }
         });
 
@@ -240,7 +269,7 @@
 
         Object.defineProperty(this, 'enumerateLoadedClasses', {
             enumerable: true,
-            value: function(callbacks) {
+            value: function (callbacks) {
                 _enumerateLoadedClasses(callbacks, true);
             }
         });
@@ -301,7 +330,7 @@
             return classFactory.getObjectClassname(obj);
         };
 
-     
+
         // Reference: http://stackoverflow.com/questions/2848575/how-to-detect-ui-thread-on-android
         this.isMainThread = function () {
             if (classFactory.loader === null) {
@@ -1116,10 +1145,10 @@
 
                     var thread = Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
                     /*
-                    var objectPtr = api.dvmDecodeIndirectRef(thread, this.$handle);
-                    var classObject = Memory.readPointer(objectPtr.add(OBJECT_OFFSET_CLAZZ));
-                    */
-                    var objectPtr = api.dvmDecodeIndirectRef(thread, instance? this.$handle: this.$classHandle);
+                     var objectPtr = api.dvmDecodeIndirectRef(thread, this.$handle);
+                     var classObject = Memory.readPointer(objectPtr.add(OBJECT_OFFSET_CLAZZ));
+                     */
+                    var objectPtr = api.dvmDecodeIndirectRef(thread, instance ? this.$handle : this.$classHandle);
                     let classObject;
                     if (instance) {
                         classObject = Memory.readPointer(objectPtr.add(OBJECT_OFFSET_CLAZZ));
@@ -1332,21 +1361,21 @@
             eval("f = function (" + ["envHandle", "thisHandle"].concat(argVariableNames).join(", ") + ") {" +
                 "var env = new Env(envHandle);" +
                 "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
-                    "return;" +
+                "return;" +
                 "}" +
                 ((type === INSTANCE_METHOD) ? "var self = new C(C.__handle__, thisHandle);" : "var self = new C(thisHandle, null);") +
                 "try {" +
-                    returnCapture + "fn.call(" + ["self"].concat(callArgs).join(", ") + ");" +
+                returnCapture + "fn.call(" + ["self"].concat(callArgs).join(", ") + ");" +
                 "} catch (e) {" +
-                    "if (typeof e === 'object' && e.hasOwnProperty('$handle')) {" +
-                        "env.throw(e.$handle);" +
-                        returnNothing +
-                    "} else {" +
-                        "throw e;" +
-                    "}" +
+                "if (typeof e === 'object' && e.hasOwnProperty('$handle')) {" +
+                "env.throw(e.$handle);" +
+                returnNothing +
+                "} else {" +
+                "throw e;" +
+                "}" +
                 "}" +
                 returnStatements +
-            "}");
+                "}");
 
             Object.defineProperty(f, 'type', {
                 enumerable: true,
