@@ -178,13 +178,13 @@
             }
         });
 
-        Object.defineProperty(this, 'gDvm', {
+        Object.defineProperty(this, 'api', {
             enumerable: true,
             get: function () {
                 if (!this.available) {
                     throw new Error("Dalvik runtime not available");
                 }
-                return api.gDvm;
+                return api;
             }
         });
 
@@ -326,6 +326,10 @@
             return classFactory.cast(obj, C);
         };
 
+        this.castObject = function (obj, C) {
+            return classFactory.castObject(obj, C);
+        };
+
         this.getObjectClassname = function (obj) {
             return classFactory.getObjectClassname(obj);
         };
@@ -427,6 +431,10 @@
             var handle = obj.hasOwnProperty('$handle') ? obj.$handle : obj;
             var C = klass.$classWrapper;
             return new C(C.__handle__, handle);
+        };
+
+        this.castObject = function (obj, klass) {
+            let result = api.dvmAddToReferenceTable(obj, obj);
         };
 
         this.getObjectClassname = function (obj) {
@@ -567,6 +575,38 @@
                 return makeMethodDispatcher("<init>", jsMethods);
             };
 
+            let makeField = function (name, handle, env) {
+                let Field = env.javaLangReflectField();
+                let Modifier = env.javaLangReflectModifier();
+                let invokeObjectMethodNoArgs = env.method('pointer', []);
+                let invokeIntMethodNoArgs = env.method('int32', []);
+                let invokeUInt8MethodNoArgs = env.method('uint8', []);
+
+                let fieldId = env.fromReflectedField(handle);
+                let fieldType = invokeObjectMethodNoArgs(env.handle, handle, Field.getGenericType);
+                let modifiers = invokeIntMethodNoArgs(env.handle, handle, Field.getModifiers);
+
+                // TODO there should be the opportunity to see the modifiers
+                let jsType = (modifiers & Modifier.STATIC) !== 0 ? STATIC_FIELD : INSTANCE_FIELD;
+
+                let jsFieldType;
+
+                try {
+                    jsFieldType = typeFromClassName(env.getTypeName(fieldType));
+                } catch (e) {
+                    return null;
+                } finally {
+                    env.deleteLocalRef(fieldType);
+                }
+
+                var field = createField(jsType, fieldId, jsFieldType, env);
+
+                if (field === null)
+                    throw new Error("No supported field");
+
+                return field;
+            };
+
             var addFields = function () {
                 let invokeObjectMethodNoArgs = env.method('pointer', []);
                 let Field_getName = env.javaLangReflectField().getName;
@@ -606,38 +646,6 @@
                         }
                     });
                 });
-            };
-
-            let makeField = function (name, handle, env) {
-                let Field = env.javaLangReflectField();
-                let Modifier = env.javaLangReflectModifier();
-                let invokeObjectMethodNoArgs = env.method('pointer', []);
-                let invokeIntMethodNoArgs = env.method('int32', []);
-                let invokeUInt8MethodNoArgs = env.method('uint8', []);
-
-                let fieldId = env.fromReflectedField(handle);
-                let fieldType = invokeObjectMethodNoArgs(env.handle, handle, Field.getGenericType);
-                let modifiers = invokeIntMethodNoArgs(env.handle, handle, Field.getModifiers);
-
-                // TODO there should be the opportunity to see the modifiers
-                let jsType = (modifiers & Modifier.STATIC) !== 0 ? STATIC_FIELD : INSTANCE_FIELD;
-
-                let jsFieldType;
-
-                try {
-                    jsFieldType = typeFromClassName(env.getTypeName(fieldType));
-                } catch (e) {
-                    return null;
-                } finally {
-                    env.deleteLocalRef(fieldType);
-                }
-
-                var field = createField(jsType, fieldId, jsFieldType, env);
-
-                if (field === null)
-                    throw new Error("No supported field");
-
-                return field;
             };
 
             var createField = function (type, fieldId, fieldType, env) {
@@ -2411,6 +2419,8 @@
                     "_Z20dvmDecodeIndirectRefP6ThreadP8_jobject": ["dvmDecodeIndirectRef", 'pointer', ['pointer', 'pointer']],
                     // void dvmUseJNIBridge(Method* method, void* func);
                     "_Z15dvmUseJNIBridgeP6MethodPv": ["dvmUseJNIBridge", 'void', ['pointer', 'pointer']],
+                    // bool dvmAddToReferenceTable(ReferenceTable* pRef, Object* obj)
+                    "_Z22dvmAddToReferenceTableP14ReferenceTableP6Object": ["dvmAddToReferenceTable", 'uint8', ['pointer', 'pointer']],
                     // ClassObject* dvmFindLoadedClass(const char* descriptor);
                     "_Z18dvmFindLoadedClassPKc": ["dvmFindLoadedClass", 'pointer', ['pointer']],
                     // ClassObject* dvmFindClass(const char* descriptor, Object* loader); TODO maybe add also dvmFindClassNoInit
