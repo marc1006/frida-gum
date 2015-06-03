@@ -62,7 +62,6 @@
     let _runtime = null;
     let _api = null;
     const pointerSize = Process.pointerSize;
-    const scratchBuffer = Memory.alloc(pointerSize);
     /* no error */
     const JNI_OK = 0;
     /* generic error */
@@ -1676,7 +1675,6 @@
         let attachCurrentThread = null;
         let detachCurrentThread = null;
         let getEnv = null;
-        let gDvm = null;
 
         var initialize = function () {
             // pointer to ```JNIInvokeInterface* JavaVM;```
@@ -1832,25 +1830,28 @@
         this.attachCurrentThread = function () {
             // hopefully we will get the pointer for JNIEnv
             // jint        (*AttachCurrentThread)(JavaVM*, JNIEnv**, void*);
-            checkJniResult("VM::AttachCurrentThread", attachCurrentThread(handle, scratchBuffer, NULL));
-            return new Env(Memory.readPointer(scratchBuffer));
-        };
+	    let envBuf = Memory.alloc(pointerSize);
+            checkJniResult("VM::AttachCurrentThread", attachCurrentThread(handle, envBuf, NULL));
+            return new Env(Memory.readPointer(envBuf));
+    	};
 
         this.detachCurrentThread = function () {
             checkJniResult("VM::DetachCurrentThread", detachCurrentThread(handle));
         };
 
         this.getEnv = function () {
-            checkJniResult("VM::GetEnv", getEnv(handle, scratchBuffer, JNI_VERSION_1_6));
-            return new Env(Memory.readPointer(scratchBuffer));
+            let envBuf = Memory.alloc(pointerSize);
+            checkJniResult("VM::GetEnv", getEnv(handle, envBuf, JNI_VERSION_1_6));
+            return new Env(Memory.readPointer(envBuf));
         };
 
         this.tryGetEnv = function () {
-            var result = getEnv(handle, scratchBuffer, JNI_VERSION_1_6);
-            if (result !== JNI_OK) {
+             let envBuf = Memory.alloc(pointerSize);
+             let result = getEnv(handle, envBuf, JNI_VERSION_1_6);
+             if (result !== JNI_OK) {
                 return null;
             }
-            return new Env(Memory.readPointer(scratchBuffer));
+            return new Env(Memory.readPointer(envBuf));
         };
 
         initialize.call(this);
