@@ -1,6 +1,7 @@
 (function () {
     "use strict";
 
+<<<<<<< HEAD
     /*
      * TODO
      *  - JIT... https://github.com/rovo89/Xposed/blob/master/libxposed_dalvik.cpp
@@ -84,6 +85,17 @@
     // android/source/dalvik/vm/Hash.h
     // invalid ptr value
     const HASH_TOMBSTONE = 0xcbcacccd;
+=======
+    var _runtime = null;
+    var _api = null;
+    var pointerSize = Process.pointerSize;
+    var JNI_OK = 0;
+    var JNI_VERSION_1_6 = 0x00010006;
+
+    var CONSTRUCTOR_METHOD = 1;
+    var STATIC_METHOD = 2;
+    var INSTANCE_METHOD = 3;
+>>>>>>> d68636111c901753f53ab92849207c251ed31f42
 
     // TODO: 64-bit
     const JNI_ENV_OFFSET_SELF = 12;
@@ -1706,7 +1718,104 @@
             var vtable2 = Memory.readPointer(ptrgDvm);
             //attachCurrentThread = new NativeFunction(Memory.readPointer(vtable.add(4 * pointerSize)), 'int32', ['pointer', 'pointer', 'pointer']);
         };
-      
+        /*
+         const registryBuiltins = {
+         "hasOwnProperty": true,
+         "toJSON": true,
+         "toString": true,
+         "valueOf": true
+         };
+
+         function Registry() {
+         const cachedFields = {};
+         let numCachedFields = 0;
+
+         const registry = Proxy.create({
+         has(name) {
+         if (registryBuiltins[name] !== undefined)
+         return true;
+         return findField(name) !== null;
+         },
+         get(target, name) {
+         switch (name) {
+         case "hasOwnProperty":
+         return this.has;
+         case "toJSON":
+         return toJSON;
+         case "toString":
+         return toString;
+         case "valueOf":
+         return valueOf;
+         default:
+         return getField(name);
+         }
+         },
+         set(target, name, value) {
+         throw new Error("Invalid operation");
+         },
+         enumerate() {
+         return this.keys();
+         },
+         iterate() {
+         const props = this.keys();
+         let i = 0;
+         return {
+         next() {
+         if (i === props.length)
+         throw StopIteration;
+         return props[i++];
+         }
+         };
+         },
+         keys() {
+         let numFields = api.objc_getClassList(NULL, 0);
+         if (numFields !== numCachedFields) {
+         // It's impossible to unregister classes in ObjC, so if the number of
+         // classes hasn't changed, we can assume that the list is up to date.
+         const rawClasses = Memory.alloc(numFields * pointerSize);
+         numFields = api.objc_getClassList(rawClasses, numFields);
+         for (let i = 0; i !== numFields; i++) {
+         const handle = Memory.readPointer(rawClasses.add(i * pointerSize));
+         const name = Memory.readUtf8String(api.class_getName(handle));
+         cachedClasses[name] = handle;
+         }
+         }
+         return Object.keys(cachedFields);
+         }
+         });
+
+         function getField(name) {
+         const fld = findField(name);
+         if (fld === null)
+         throw new Error("Unable to find field '" + name + "'");
+         return fld;
+         }
+
+         function findField(name) {
+         let handle = cachedFields[name];
+         if (handle === undefined)
+         handle = api.objc_lookUpClass(Memory.allocUtf8String(name));
+         if (handle.isNull())
+         return null;
+         return new ObjCObject(handle, true);
+         }
+
+         function toJSON() {
+         return {};
+         }
+
+         function toString() {
+         return "Registry";
+         }
+
+         function valueOf() {
+         return "Registry";
+         }
+
+         return registry;
+         }
+         */
+
         this.perform = function (fn) {
             var env = this.tryGetEnv();
             var alreadyAttached = env !== null;
@@ -1731,27 +1840,44 @@
         };
 
         this.attachCurrentThread = function () {
+<<<<<<< HEAD
             // hopefully we will get the pointer for JNIEnv
             // jint        (*AttachCurrentThread)(JavaVM*, JNIEnv**, void*);
 	    let envBuf = Memory.alloc(pointerSize);
             checkJniResult("VM::AttachCurrentThread", attachCurrentThread(handle, envBuf, NULL));
             return new Env(Memory.readPointer(envBuf));
     	};
+=======
+            var envBuf = Memory.alloc(pointerSize);
+            checkJniResult("VM::AttachCurrentThread", attachCurrentThread(handle, envBuf, NULL));
+            return new Env(Memory.readPointer(envBuf));
+        };
+>>>>>>> d68636111c901753f53ab92849207c251ed31f42
 
         this.detachCurrentThread = function () {
             checkJniResult("VM::DetachCurrentThread", detachCurrentThread(handle));
         };
 
         this.getEnv = function () {
+<<<<<<< HEAD
             let envBuf = Memory.alloc(pointerSize);
+=======
+            var envBuf = Memory.alloc(pointerSize);
+>>>>>>> d68636111c901753f53ab92849207c251ed31f42
             checkJniResult("VM::GetEnv", getEnv(handle, envBuf, JNI_VERSION_1_6));
             return new Env(Memory.readPointer(envBuf));
         };
 
         this.tryGetEnv = function () {
+<<<<<<< HEAD
              let envBuf = Memory.alloc(pointerSize);
              let result = getEnv(handle, envBuf, JNI_VERSION_1_6);
              if (result !== JNI_OK) {
+=======
+            var envBuf = Memory.alloc(pointerSize);
+            var result = getEnv(handle, envBuf, JNI_VERSION_1_6);
+            if (result !== JNI_OK) {
+>>>>>>> d68636111c901753f53ab92849207c251ed31f42
                 return null;
             }
             return new Env(Memory.readPointer(envBuf));
