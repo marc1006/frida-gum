@@ -62,7 +62,7 @@
     let _runtime = null;
     let _api = null;
     const pointerSize = Process.pointerSize;
-    const scratchBuffer = Memory.alloc(pointerSize);
+
     /* no error */
     const JNI_OK = 0;
     /* generic error */
@@ -1163,7 +1163,7 @@
                     if (instance) {
                         classObject = Memory.readPointer(objectPtr.add(OBJECT_OFFSET_CLAZZ));
                     } else {
-                        classObject = objectPtr; //Memory.readPointer(objectPtr);
+                        classObject = objectPtr;
                     }
                     var key = classObject.toString(16);
                     var entry = patchedClasses[key];
@@ -1237,7 +1237,6 @@
                             var insSize = argsSize;
                             // parse method arguments
                             var jniArgInfo = 0x80000000;
-
 
                             Memory.writeU32(methodId.add(METHOD_OFFSET_ACCESS_FLAGS), accessFlags);
                             Memory.writeU16(methodId.add(METHOD_OFFSET_REGISTERS_SIZE), registersSize);
@@ -1371,21 +1370,21 @@
             eval("f = function (" + ["envHandle", "thisHandle"].concat(argVariableNames).join(", ") + ") {" +
                 "var env = new Env(envHandle);" +
                 "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
-                "return;" +
+                    "return;" +
                 "}" +
                 ((type === INSTANCE_METHOD) ? "var self = new C(C.__handle__, thisHandle);" : "var self = new C(thisHandle, null);") +
                 "try {" +
-                returnCapture + "fn.call(" + ["self"].concat(callArgs).join(", ") + ");" +
+                    returnCapture + "fn.call(" + ["self"].concat(callArgs).join(", ") + ");" +
                 "} catch (e) {" +
-                "if (typeof e === 'object' && e.hasOwnProperty('$handle')) {" +
-                "env.throw(e.$handle);" +
-                returnNothing +
-                "} else {" +
-                "throw e;" +
-                "}" +
+                    "if (typeof e === 'object' && e.hasOwnProperty('$handle')) {" +
+                        "env.throw(e.$handle);" +
+                        returnNothing +
+                    "} else {" +
+                        "throw e;" +
+                    "}" +
                 "}" +
                 returnStatements +
-                "}");
+            "}");
 
             Object.defineProperty(f, 'type', {
                 enumerable: true,
@@ -1676,7 +1675,6 @@
         let attachCurrentThread = null;
         let detachCurrentThread = null;
         let getEnv = null;
-        let gDvm = null;
 
         var initialize = function () {
             // pointer to ```JNIInvokeInterface* JavaVM;```
@@ -1700,9 +1698,6 @@
             attachCurrentThread = new NativeFunction(Memory.readPointer(vtable.add(4 * pointerSize)), 'int32', ['pointer', 'pointer', 'pointer']);
             detachCurrentThread = new NativeFunction(Memory.readPointer(vtable.add(5 * pointerSize)), 'int32', ['pointer']);
             getEnv = new NativeFunction(Memory.readPointer(vtable.add(6 * pointerSize)), 'int32', ['pointer', 'pointer', 'int32']);
-
-            //   gDvm = new gDvm(api);
-
 
             var ptrgDvm = Memory.readPointer(api.gDvm.add(0));
             var vtable2 = Memory.readPointer(ptrgDvm);
@@ -1832,8 +1827,9 @@
         this.attachCurrentThread = function () {
             // hopefully we will get the pointer for JNIEnv
             // jint        (*AttachCurrentThread)(JavaVM*, JNIEnv**, void*);
-            checkJniResult("VM::AttachCurrentThread", attachCurrentThread(handle, scratchBuffer, NULL));
-            return new Env(Memory.readPointer(scratchBuffer));
+            var envBuf = Memory.alloc(pointerSize);
+            checkJniResult("VM::AttachCurrentThread", attachCurrentThread(handle, envBuf, NULL));
+            return new Env(Memory.readPointer(envBuf));
         };
 
         this.detachCurrentThread = function () {
@@ -1841,16 +1837,18 @@
         };
 
         this.getEnv = function () {
-            checkJniResult("VM::GetEnv", getEnv(handle, scratchBuffer, JNI_VERSION_1_6));
-            return new Env(Memory.readPointer(scratchBuffer));
+            var envBuf = Memory.alloc(pointerSize);
+            checkJniResult("VM::GetEnv", getEnv(handle, envBuf, JNI_VERSION_1_6));
+            return new Env(Memory.readPointer(envBuf));
         };
 
         this.tryGetEnv = function () {
-            var result = getEnv(handle, scratchBuffer, JNI_VERSION_1_6);
+            var envBuf = Memory.alloc(pointerSize);
+            var result = getEnv(handle, envBuf, JNI_VERSION_1_6);
             if (result !== JNI_OK) {
                 return null;
             }
-            return new Env(Memory.readPointer(scratchBuffer));
+            return new Env(Memory.readPointer(envBuf));
         };
 
         initialize.call(this);
