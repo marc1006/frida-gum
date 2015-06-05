@@ -167,6 +167,20 @@
             }
         });
 
+        Object.defineProperty(this, 'dvmIsValidObject', {
+            enumerable: true,
+            get: function (obj) {
+                if (!this.available) {
+                    throw new Error("Dalvik runtime not available");
+                }
+                if (obj instanceof NativePointer) {
+                    return api.dvmIsValidObject(obj);
+                } else {
+                    throw new Error('Parameter has to be an native pointer.');
+                }
+            }
+        });
+
         Object.defineProperty(this, 'heapSourceLimit', {
             enumerable: true,
             get: function () {
@@ -325,8 +339,12 @@
             return classFactory.cast(obj, C);
         };
 
-        this.castObject = function (obj, C) {
-            return classFactory.castObject(obj, C);
+        this.castObject = function (obj, C, func) {
+            return classFactory.castObject(obj, C, func);
+        };
+
+        this.getThreadPtr = function () {
+            return classFactory.getThreadPtr();
         };
 
         this.getObjectClassname = function (obj) {
@@ -432,8 +450,14 @@
             return new C(C.__handle__, handle);
         };
 
-        this.castObject = function (obj, klass) {
-            let result = api.dvmAddToReferenceTable(obj, obj);
+        this.castObject = function (obj, addLocalReferenceFunc) {
+            return false;
+            //let result = //api.dvmAddToReferenceTable(obj, obj);
+        };
+
+        this.getThreadPtr = function (){
+            let env = vm.getEnv();
+            return Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
         };
 
         this.getObjectClassname = function (obj) {
@@ -1957,6 +1981,26 @@
             return result;
         });
 
+        Env.prototype.addLocalReference = function () {
+
+
+        };
+
+          /*
+            proxy(6, 'pointer', ['pointer', 'pointer'], function (impl, name) {
+            var result = impl(this.handle, Memory.allocUtf8String(name));
+            var throwable = this.exceptionOccurred();
+            if (!throwable.isNull()) {
+                this.exceptionClear();
+                var description = this.method('pointer', [])(this.handle, throwable, this.javaLangObject().toString);
+                var descriptionStr = this.stringFromJni(description);
+                this.deleteLocalRef(description);
+                this.deleteLocalRef(throwable);
+                throw new Error(descriptionStr);
+            }
+            return result;
+        });*/
+
         Env.prototype.fromReflectedMethod = proxy(7, 'pointer', ['pointer', 'pointer'], function (impl, method) {
             return impl(this.handle, method);
         });
@@ -2324,7 +2368,7 @@
                     // void dvmUseJNIBridge(Method* method, void* func);
                     "_Z15dvmUseJNIBridgeP6MethodPv": ["dvmUseJNIBridge", 'void', ['pointer', 'pointer']],
                     // bool dvmAddToReferenceTable(ReferenceTable* pRef, Object* obj)
-                    "_Z22dvmAddToReferenceTableP14ReferenceTableP6Object": ["dvmAddToReferenceTable", 'uint8', ['pointer', 'pointer']],
+                  // not needed anymore  "_Z22dvmAddToReferenceTableP14ReferenceTableP6Object": ["dvmAddToReferenceTable", 'uint8', ['pointer', 'pointer']],
                     // ClassObject* dvmFindLoadedClass(const char* descriptor);
                     "_Z18dvmFindLoadedClassPKc": ["dvmFindLoadedClass", 'pointer', ['pointer']],
                     // ClassObject* dvmFindClass(const char* descriptor, Object* loader); TODO maybe add also dvmFindClassNoInit
@@ -2364,7 +2408,13 @@
                      * Returns a high water mark, between base and limit all objects must have been
                      * allocated.
                      */
-                    "_Z21dvmHeapSourceGetLimitv": ["dvmHeapSourceGetLimit", 'pointer', []]
+                    "_Z21dvmHeapSourceGetLimitv": ["dvmHeapSourceGetLimit", 'pointer', []],
+
+                    /*
+                     *  Returns true if <obj> points to a valid allocated object.
+                     *  bool dvmIsValidObject(const Object* obj)
+                     */
+                    "_Z16dvmIsValidObjectPK6Object": ["dvmIsValidObject", 'uint8', ['pointer']]
                 },
                 // Reference: http://osxr.org/android/source/dalvik/vm/Globals.h
                 variables: {
