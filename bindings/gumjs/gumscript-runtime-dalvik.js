@@ -62,7 +62,6 @@
     let _runtime = null;
     let _api = null;
     const pointerSize = Process.pointerSize;
-
     /* no error */
     const JNI_OK = 0;
     /* generic error */
@@ -1163,7 +1162,7 @@
                     if (instance) {
                         classObject = Memory.readPointer(objectPtr.add(OBJECT_OFFSET_CLAZZ));
                     } else {
-                        classObject = objectPtr;
+                        classObject = objectPtr; //Memory.readPointer(objectPtr);
                     }
                     var key = classObject.toString(16);
                     var entry = patchedClasses[key];
@@ -1237,6 +1236,7 @@
                             var insSize = argsSize;
                             // parse method arguments
                             var jniArgInfo = 0x80000000;
+
 
                             Memory.writeU32(methodId.add(METHOD_OFFSET_ACCESS_FLAGS), accessFlags);
                             Memory.writeU16(methodId.add(METHOD_OFFSET_REGISTERS_SIZE), registersSize);
@@ -1370,21 +1370,21 @@
             eval("f = function (" + ["envHandle", "thisHandle"].concat(argVariableNames).join(", ") + ") {" +
                 "var env = new Env(envHandle);" +
                 "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
-                    "return;" +
+                "return;" +
                 "}" +
                 ((type === INSTANCE_METHOD) ? "var self = new C(C.__handle__, thisHandle);" : "var self = new C(thisHandle, null);") +
                 "try {" +
-                    returnCapture + "fn.call(" + ["self"].concat(callArgs).join(", ") + ");" +
+                returnCapture + "fn.call(" + ["self"].concat(callArgs).join(", ") + ");" +
                 "} catch (e) {" +
-                    "if (typeof e === 'object' && e.hasOwnProperty('$handle')) {" +
-                        "env.throw(e.$handle);" +
-                        returnNothing +
-                    "} else {" +
-                        "throw e;" +
-                    "}" +
+                "if (typeof e === 'object' && e.hasOwnProperty('$handle')) {" +
+                "env.throw(e.$handle);" +
+                returnNothing +
+                "} else {" +
+                "throw e;" +
+                "}" +
                 "}" +
                 returnStatements +
-            "}");
+                "}");
 
             Object.defineProperty(f, 'type', {
                 enumerable: true,
@@ -1699,108 +1699,14 @@
             detachCurrentThread = new NativeFunction(Memory.readPointer(vtable.add(5 * pointerSize)), 'int32', ['pointer']);
             getEnv = new NativeFunction(Memory.readPointer(vtable.add(6 * pointerSize)), 'int32', ['pointer', 'pointer', 'int32']);
 
+            //   gDvm = new gDvm(api);
+
+
             var ptrgDvm = Memory.readPointer(api.gDvm.add(0));
             var vtable2 = Memory.readPointer(ptrgDvm);
             //attachCurrentThread = new NativeFunction(Memory.readPointer(vtable.add(4 * pointerSize)), 'int32', ['pointer', 'pointer', 'pointer']);
         };
-        /*
-         const registryBuiltins = {
-         "hasOwnProperty": true,
-         "toJSON": true,
-         "toString": true,
-         "valueOf": true
-         };
-
-         function Registry() {
-         const cachedFields = {};
-         let numCachedFields = 0;
-
-         const registry = Proxy.create({
-         has(name) {
-         if (registryBuiltins[name] !== undefined)
-         return true;
-         return findField(name) !== null;
-         },
-         get(target, name) {
-         switch (name) {
-         case "hasOwnProperty":
-         return this.has;
-         case "toJSON":
-         return toJSON;
-         case "toString":
-         return toString;
-         case "valueOf":
-         return valueOf;
-         default:
-         return getField(name);
-         }
-         },
-         set(target, name, value) {
-         throw new Error("Invalid operation");
-         },
-         enumerate() {
-         return this.keys();
-         },
-         iterate() {
-         const props = this.keys();
-         let i = 0;
-         return {
-         next() {
-         if (i === props.length)
-         throw StopIteration;
-         return props[i++];
-         }
-         };
-         },
-         keys() {
-         let numFields = api.objc_getClassList(NULL, 0);
-         if (numFields !== numCachedFields) {
-         // It's impossible to unregister classes in ObjC, so if the number of
-         // classes hasn't changed, we can assume that the list is up to date.
-         const rawClasses = Memory.alloc(numFields * pointerSize);
-         numFields = api.objc_getClassList(rawClasses, numFields);
-         for (let i = 0; i !== numFields; i++) {
-         const handle = Memory.readPointer(rawClasses.add(i * pointerSize));
-         const name = Memory.readUtf8String(api.class_getName(handle));
-         cachedClasses[name] = handle;
-         }
-         }
-         return Object.keys(cachedFields);
-         }
-         });
-
-         function getField(name) {
-         const fld = findField(name);
-         if (fld === null)
-         throw new Error("Unable to find field '" + name + "'");
-         return fld;
-         }
-
-         function findField(name) {
-         let handle = cachedFields[name];
-         if (handle === undefined)
-         handle = api.objc_lookUpClass(Memory.allocUtf8String(name));
-         if (handle.isNull())
-         return null;
-         return new ObjCObject(handle, true);
-         }
-
-         function toJSON() {
-         return {};
-         }
-
-         function toString() {
-         return "Registry";
-         }
-
-         function valueOf() {
-         return "Registry";
-         }
-
-         return registry;
-         }
-         */
-
+      
         this.perform = function (fn) {
             var env = this.tryGetEnv();
             var alreadyAttached = env !== null;
@@ -1827,25 +1733,25 @@
         this.attachCurrentThread = function () {
             // hopefully we will get the pointer for JNIEnv
             // jint        (*AttachCurrentThread)(JavaVM*, JNIEnv**, void*);
-            var envBuf = Memory.alloc(pointerSize);
+	    let envBuf = Memory.alloc(pointerSize);
             checkJniResult("VM::AttachCurrentThread", attachCurrentThread(handle, envBuf, NULL));
             return new Env(Memory.readPointer(envBuf));
-        };
+    	};
 
         this.detachCurrentThread = function () {
             checkJniResult("VM::DetachCurrentThread", detachCurrentThread(handle));
         };
 
         this.getEnv = function () {
-            var envBuf = Memory.alloc(pointerSize);
+            let envBuf = Memory.alloc(pointerSize);
             checkJniResult("VM::GetEnv", getEnv(handle, envBuf, JNI_VERSION_1_6));
             return new Env(Memory.readPointer(envBuf));
         };
 
         this.tryGetEnv = function () {
-            var envBuf = Memory.alloc(pointerSize);
-            var result = getEnv(handle, envBuf, JNI_VERSION_1_6);
-            if (result !== JNI_OK) {
+             let envBuf = Memory.alloc(pointerSize);
+             let result = getEnv(handle, envBuf, JNI_VERSION_1_6);
+             if (result !== JNI_OK) {
                 return null;
             }
             return new Env(Memory.readPointer(envBuf));
