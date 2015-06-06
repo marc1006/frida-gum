@@ -149,6 +149,30 @@
             return api;
         };
 
+        Object.defineProperty(this, 'addLocalReference', {
+            enumerable: true,
+            value: function () {
+                let res = null;
+                // TODO adjust size
+                // 2D E9 F0 41 05 46 15 4E 0C 46 7E 44 11 B3 43 68 00 F1 A8 08 22 46 40 46 53 F8 08 1C DE F7 4A ED
+                Memory.scan(Module.findBaseAddress('libdvm.so'), 100000000, '2D E9 F0 41 05 46 15 4E 0C 46 7E 44 11 B3 43 68',
+                    {
+                        onMatch: function (address, size) {
+                            // Note that on 32-bit ARM this address must have its least significant bit set to 0 for ARM functions, and 1 for Thumb functions. => So set it to 1
+                            address = address.or(1);
+                            console.log(address);
+                            res = new NativeFunction(address, 'pointer', ['pointer', 'pointer']);
+                            return 'stop';
+                        },
+                        onError: function (reason) {
+                        },
+                        onComplete: function () {
+                        }
+                    });
+                return res;
+            }
+        });
+
         Object.defineProperty(this, 'getApplicationContext', {
             enumerable: true,
             get: function () {
@@ -1730,7 +1754,7 @@
             var vtable2 = Memory.readPointer(ptrgDvm);
             //attachCurrentThread = new NativeFunction(Memory.readPointer(vtable.add(4 * pointerSize)), 'int32', ['pointer', 'pointer', 'pointer']);
         };
-      
+
         this.perform = function (fn) {
             var env = this.tryGetEnv();
             var alreadyAttached = env !== null;
