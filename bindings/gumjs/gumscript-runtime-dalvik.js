@@ -1167,6 +1167,7 @@
                     "throw new Error(\"Out of memory\");" +
                     "}" +
                     "try {" +
+                        "console.log('here');" +
                     "synchronizeVtable.call(this, env, type === INSTANCE_METHOD);" +
                     returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
                     "} catch (e) {" +
@@ -1178,6 +1179,7 @@
                     "env.exceptionClear();" +
                     "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
                     "var descriptionStr = env.stringFromJni(description);" +
+                        "console.log(descriptionStr);" +
                     "env.popLocalFrame(NULL);" +
                     "throw new Error(descriptionStr);" +
                     "}" +
