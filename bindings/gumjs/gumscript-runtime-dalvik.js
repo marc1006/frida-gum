@@ -149,30 +149,6 @@
             return api;
         };
 
-        Object.defineProperty(this, 'addLocalReference', {
-            enumerable: true,
-            value: function () {
-                let res = null;
-                // TODO adjust size
-                // 2D E9 F0 41 05 46 15 4E 0C 46 7E 44 11 B3 43 68 00 F1 A8 08 22 46 40 46 53 F8 08 1C DE F7 4A ED
-                Memory.scan(Module.findBaseAddress('libdvm.so'), 100000000, '2D E9 F0 41 05 46 15 4E 0C 46 7E 44 11 B3 43 68',
-                    {
-                        onMatch: function (address, size) {
-                            // Note that on 32-bit ARM this address must have its least significant bit set to 0 for ARM functions, and 1 for Thumb functions. => So set it to 1
-                            address = address.or(1);
-                            console.log(address);
-                            res = new NativeFunction(address, 'pointer', ['pointer', 'pointer']);
-                            return 'stop';
-                        },
-                        onError: function (reason) {
-                        },
-                        onComplete: function () {
-                        }
-                    });
-                return res;
-            }
-        });
-
         Object.defineProperty(this, 'getApplicationContext', {
             enumerable: true,
             get: function () {
@@ -191,6 +167,16 @@
             }
         });
 
+        Object.defineProperty(this, 'heapSourceLimit', {
+            enumerable: true,
+            get: function () {
+                if (!this.available) {
+                    throw new Error("Dalvik runtime not available");
+                }
+                return api.dvmHeapSourceGetLimit();
+            }
+        });
+
         Object.defineProperty(this, 'dvmIsValidObject', {
             enumerable: true,
             get: function (obj) {
@@ -202,16 +188,6 @@
                 } else {
                     throw new Error('Parameter has to be an native pointer.');
                 }
-            }
-        });
-
-        Object.defineProperty(this, 'heapSourceLimit', {
-            enumerable: true,
-            get: function () {
-                if (!this.available) {
-                    throw new Error("Dalvik runtime not available");
-                }
-                return api.dvmHeapSourceGetLimit();
             }
         });
 
@@ -359,6 +335,13 @@
             return classFactory.use(className);
         };
 
+        this.choose = function (className, callbacks) {
+            if (classFactory.loader === null) {
+                throw new Error("Not allowed outside Dalvik.perform() callback");
+            }
+            return classFactory.choose(className, callbacks);
+        };
+
         this.cast = function (obj, C) {
             return classFactory.cast(obj, C);
         };
@@ -408,6 +391,7 @@
         var classes = {};
         var patchedClasses = {};
         var loader = null;
+        let addLocalReferenceFunc = null;
 
         var initialize = function () {
             api = getApi();
@@ -466,6 +450,79 @@
                 }
             }
             return new C(C.__handle__, null);
+        };
+
+
+        this.choose = function (className, callbacks) {
+            let env = vm.getEnv();
+            let klass = this.use(className);
+
+            let enumerateInstances = function (className, callbacks) {
+                let thread = Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
+                let ptrClassObject = api.dvmDecodeIndirectRef(thread, klass.$classHandle);
+
+                let pattern = ptrClassObject.toString().substring(2);
+                let newPattern = "";
+                let start = pattern.length - 1;
+                for (let i = start; i >= 0; i--) {
+                    if (i !== start && i % 2 === 0) {
+                        newPattern += ' ';
+                    }
+                    if (i >= 1) {
+                        newPattern += pattern.charAt(i) ;
+                        i--;
+                        newPattern += pattern.charAt(i);
+                    }
+                }
+
+                let size = api.dvmHeapSourceGetLimit().toInt32() - api.dvmHeapSourceGetBase().toInt32();
+                Memory.scan(api.dvmHeapSourceGetBase(), size, newPattern, {
+                    onMatch: function (address, size) {
+                        if (api.dvmIsValidObject(address)) {
+                            Dalvik.perform(function () {
+                                let env = vm.getEnv();
+                                let thread = Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
+
+                                let localReference = addLocalReferenceFunc(thread, address);
+                                let instance = Dalvik.cast(localReference, klass);
+                                let stopMaybe = callbacks.onMatch(instance);
+                                env.deleteLocalRef(localReference);
+                                if (stopMaybe === 'stop') {
+                                    return 'stop';
+                                }
+                            });
+                        }
+                    },
+                    onError: function (reason) {
+                        callbacks.onError(reason);
+                    },
+                    onComplete: function () {
+                        callbacks.onComplete();
+                    }
+                });
+            };
+
+            if (addLocalReferenceFunc === null) {
+                let libdvm = Process.getModuleByName('libdvm.so');
+                Memory.scan(libdvm.base, libdvm.size, '2D E9 F0 41 05 46 15 4E 0C 46 7E 44 11 B3 43 68',
+                    {
+                        onMatch: function (address, size) {
+                            // Note that on 32-bit ARM this address must have its least significant bit set to 0 for ARM functions, and 1 for Thumb functions. => So set it to 1
+                            if (Process.arch === 'arm') {
+                                address = address.or(1);
+                            }
+                            addLocalReferenceFunc = new NativeFunction(address, 'pointer', ['pointer', 'pointer']);
+                            enumerateInstances(className, callbacks);
+                            return 'stop';
+                        },
+                        onError: function (reason) {
+                        },
+                        onComplete: function () {
+                        }
+                    });
+            } else {
+                enumerateInstances(className, callbacks);
+            }
         };
 
         this.cast = function (obj, klass) {
@@ -1781,7 +1838,7 @@
         this.attachCurrentThread = function () {
             // hopefully we will get the pointer for JNIEnv
             // jint        (*AttachCurrentThread)(JavaVM*, JNIEnv**, void*);
-	    let envBuf = Memory.alloc(pointerSize);
+	        let envBuf = Memory.alloc(pointerSize);
             checkJniResult("VM::AttachCurrentThread", attachCurrentThread(handle, envBuf, NULL));
             return new Env(Memory.readPointer(envBuf));
     	};
