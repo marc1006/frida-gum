@@ -452,31 +452,38 @@
             return new C(C.__handle__, null);
         };
 
-
         this.choose = function (className, callbacks) {
             let env = vm.getEnv();
             let klass = this.use(className);
+
+            function padLeft(nr, n, str) {
+                return new Array(n - nr.length + 1).join(str || '0') + nr;
+            }
+
+            function reverseByteStr(str) {
+                str = padLeft(str, Process.pointerSize * 2);
+                let start = str.length - 1;
+
+                let result = "";
+                for (let i = start; i >= 0; i -= 2) {
+                    if (i !== start && i % 2 !== 0) {
+                        result += " ";
+                    }
+
+                    result += str.charAt(i - 1) + str.charAt(i);
+                }
+                return result;
+            }
 
             let enumerateInstances = function (className, callbacks) {
                 let thread = Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
                 let ptrClassObject = api.dvmDecodeIndirectRef(thread, klass.$classHandle);
 
                 let pattern = ptrClassObject.toString().substring(2);
-                let newPattern = "";
-                let start = pattern.length - 1;
-                for (let i = start; i >= 0; i--) {
-                    if (i !== start && i % 2 === 0) {
-                        newPattern += ' ';
-                    }
-                    if (i >= 1) {
-                        newPattern += pattern.charAt(i) ;
-                        i--;
-                        newPattern += pattern.charAt(i);
-                    }
-                }
+                pattern = reverseByteStr(pattern);
 
                 let size = api.dvmHeapSourceGetLimit().toInt32() - api.dvmHeapSourceGetBase().toInt32();
-                Memory.scan(api.dvmHeapSourceGetBase(), size, newPattern, {
+                Memory.scan(api.dvmHeapSourceGetBase(), size, pattern, {
                     onMatch: function (address, size) {
                         if (api.dvmIsValidObject(address)) {
                             Dalvik.perform(function () {
@@ -536,7 +543,7 @@
             //let result = //api.dvmAddToReferenceTable(obj, obj);
         };
 
-        this.getThreadPtr = function (){
+        this.getThreadPtr = function () {
             let env = vm.getEnv();
             return Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
         };
@@ -1838,10 +1845,10 @@
         this.attachCurrentThread = function () {
             // hopefully we will get the pointer for JNIEnv
             // jint        (*AttachCurrentThread)(JavaVM*, JNIEnv**, void*);
-	        let envBuf = Memory.alloc(pointerSize);
+            let envBuf = Memory.alloc(pointerSize);
             checkJniResult("VM::AttachCurrentThread", attachCurrentThread(handle, envBuf, NULL));
             return new Env(Memory.readPointer(envBuf));
-    	};
+        };
 
         this.detachCurrentThread = function () {
             checkJniResult("VM::DetachCurrentThread", detachCurrentThread(handle));
@@ -1854,9 +1861,9 @@
         };
 
         this.tryGetEnv = function () {
-             let envBuf = Memory.alloc(pointerSize);
-             let result = getEnv(handle, envBuf, JNI_VERSION_1_6);
-             if (result !== JNI_OK) {
+            let envBuf = Memory.alloc(pointerSize);
+            let result = getEnv(handle, envBuf, JNI_VERSION_1_6);
+            if (result !== JNI_OK) {
                 return null;
             }
             return new Env(Memory.readPointer(envBuf));
@@ -2067,20 +2074,20 @@
 
         };
 
-          /*
-            proxy(6, 'pointer', ['pointer', 'pointer'], function (impl, name) {
-            var result = impl(this.handle, Memory.allocUtf8String(name));
-            var throwable = this.exceptionOccurred();
-            if (!throwable.isNull()) {
-                this.exceptionClear();
-                var description = this.method('pointer', [])(this.handle, throwable, this.javaLangObject().toString);
-                var descriptionStr = this.stringFromJni(description);
-                this.deleteLocalRef(description);
-                this.deleteLocalRef(throwable);
-                throw new Error(descriptionStr);
-            }
-            return result;
-        });*/
+        /*
+         proxy(6, 'pointer', ['pointer', 'pointer'], function (impl, name) {
+         var result = impl(this.handle, Memory.allocUtf8String(name));
+         var throwable = this.exceptionOccurred();
+         if (!throwable.isNull()) {
+         this.exceptionClear();
+         var description = this.method('pointer', [])(this.handle, throwable, this.javaLangObject().toString);
+         var descriptionStr = this.stringFromJni(description);
+         this.deleteLocalRef(description);
+         this.deleteLocalRef(throwable);
+         throw new Error(descriptionStr);
+         }
+         return result;
+         });*/
 
         Env.prototype.fromReflectedMethod = proxy(7, 'pointer', ['pointer', 'pointer'], function (impl, method) {
             return impl(this.handle, method);
@@ -2449,7 +2456,7 @@
                     // void dvmUseJNIBridge(Method* method, void* func);
                     "_Z15dvmUseJNIBridgeP6MethodPv": ["dvmUseJNIBridge", 'void', ['pointer', 'pointer']],
                     // bool dvmAddToReferenceTable(ReferenceTable* pRef, Object* obj)
-                  // not needed anymore  "_Z22dvmAddToReferenceTableP14ReferenceTableP6Object": ["dvmAddToReferenceTable", 'uint8', ['pointer', 'pointer']],
+                    // not needed anymore  "_Z22dvmAddToReferenceTableP14ReferenceTableP6Object": ["dvmAddToReferenceTable", 'uint8', ['pointer', 'pointer']],
                     // ClassObject* dvmFindLoadedClass(const char* descriptor);
                     "_Z18dvmFindLoadedClassPKc": ["dvmFindLoadedClass", 'pointer', ['pointer']],
                     // ClassObject* dvmFindClass(const char* descriptor, Object* loader); TODO maybe add also dvmFindClassNoInit
