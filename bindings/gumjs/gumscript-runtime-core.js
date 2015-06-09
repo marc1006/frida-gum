@@ -198,6 +198,21 @@
         }
     });
 
+    Object.defineProperty(Process, 'enumerateMallocRangesSync', {
+        enumerable: true,
+        value: function () {
+            var ranges = [];
+            Process.enumerateMallocRanges({
+                onMatch: function (r) {
+                    ranges.push(r);
+                },
+                onComplete: function () {
+                }
+            });
+            return ranges;
+        }
+    });
+
     Object.defineProperty(Process, 'getModuleByName', {
         enumerable: true,
         value: function (name) {
@@ -272,6 +287,13 @@
             return Instruction._parse(target);
         }
     });
+
+    NativePointer.prototype.equals = function (ptr) {
+        if (!(ptr instanceof NativePointer)) {
+            throw new Error("Not a pointer");
+        }
+        return this.compare(ptr) === 0;
+    };
 
     var MessageDispatcher = function () {
         var messages = [];
