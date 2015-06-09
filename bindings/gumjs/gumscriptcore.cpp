@@ -1365,9 +1365,9 @@ gum_script_core_on_native_pointer_to_match_pattern (
   gsize ptr = GPOINTER_TO_SIZE (GUM_NATIVE_POINTER_VALUE (info.Holder ()));
   gchar buf[32];
   #if G_BYTE_ORDER == G_LITTLE_ENDIAN
-    sprintf (buf, "%0" G_STRINGIFY (GLIB_SIZEOF_VOID_P_IN_NIBBLE) G_GSIZE_MODIFIER "x", GSIZE_FROM_BE (ptr));
+    sprintf (buf, "%0" G_STRINGIFY (GLIB_SIZEOF_VOID_P_IN_NIBBLE) G_GSIZE_MODIFIER "x", GSIZE_TO_BE (ptr));
   #else
-    sprintf (buf, "%0" G_STRINGIFY (GLIB_SIZEOF_VOID_P_IN_NIBBLE) G_GSIZE_MODIFIER "x", GSIZE_FROM_LE (ptr));
+    sprintf (buf, "%0" G_STRINGIFY (GLIB_SIZEOF_VOID_P_IN_NIBBLE) G_GSIZE_MODIFIER "x", GSIZE_TO_LE (ptr));
   #endif
 
   info.GetReturnValue ().Set (String::NewFromUtf8 (isolate, buf));
