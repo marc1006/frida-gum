@@ -8,6 +8,7 @@
 #include "script-fixture.c"
 
 #import <Foundation/Foundation.h>
+#import <objc/runtime.h>
 
 TEST_LIST_BEGIN (script_darwin)
   SCRIPT_TESTENTRY (classes_can_be_enumerated)
@@ -15,9 +16,13 @@ TEST_LIST_BEGIN (script_darwin)
   SCRIPT_TESTENTRY (class_enumeration_should_not_contain_instance_methods)
   SCRIPT_TESTENTRY (instance_enumeration_should_not_contain_class_methods)
   SCRIPT_TESTENTRY (class_can_be_retrieved)
+  SCRIPT_TESTENTRY (super_can_be_retrieved)
+  SCRIPT_TESTENTRY (class_name_can_be_retrieved)
   SCRIPT_TESTENTRY (class_method_can_be_invoked)
   SCRIPT_TESTENTRY (object_can_be_constructed_from_pointer)
   SCRIPT_TESTENTRY (string_can_be_constructed)
+  SCRIPT_TESTENTRY (string_can_be_passed_as_argument)
+  SCRIPT_TESTENTRY (class_can_be_implemented)
   SCRIPT_TESTENTRY (method_implementation_can_be_overridden)
   SCRIPT_TESTENTRY (attempt_to_access_an_inexistent_method_should_throw)
   SCRIPT_TESTENTRY (methods_with_weird_names_can_be_invoked)
@@ -95,6 +100,32 @@ SCRIPT_TESTCASE (class_can_be_retrieved)
   }
 }
 
+SCRIPT_TESTCASE (super_can_be_retrieved)
+{
+  @autoreleasepool
+  {
+    COMPILE_AND_LOAD_SCRIPT (
+        "send(ObjC.classes.NSDate.$super.$className === \"NSObject\");"
+        "send(ObjC.classes.NSObject.$super === null);");
+    EXPECT_SEND_MESSAGE_WITH ("true");
+    EXPECT_SEND_MESSAGE_WITH ("true");
+  }
+}
+
+SCRIPT_TESTCASE (class_name_can_be_retrieved)
+{
+  @autoreleasepool
+  {
+    COMPILE_AND_LOAD_SCRIPT (
+        "var NSDate = ObjC.classes.NSDate;"
+        "send(NSDate.$className);"
+        "var now = NSDate.date();"
+        "send(typeof now.$className);");
+    EXPECT_SEND_MESSAGE_WITH ("\"NSDate\"");
+    EXPECT_SEND_MESSAGE_WITH ("\"string\"");
+  }
+}
+
 SCRIPT_TESTCASE (class_method_can_be_invoked)
 {
   @autoreleasepool
@@ -129,6 +160,75 @@ SCRIPT_TESTCASE (string_can_be_constructed)
         "var NSString = ObjC.classes.NSString;"
         "NSString.stringWithUTF8String_(Memory.allocUtf8String(\"Snakes\"));");
     EXPECT_NO_MESSAGES ();
+  }
+}
+
+SCRIPT_TESTCASE (string_can_be_passed_as_argument)
+{
+  @autoreleasepool
+  {
+    COMPILE_AND_LOAD_SCRIPT (
+        "var NSString = ObjC.classes.NSString;"
+        "var str = NSString.stringWithUTF8String_(Memory.allocUtf8String(\"Snakes\"));"
+        "str = str.stringByAppendingString_(\"Mushrooms\");"
+        "send(str.toString());");
+    EXPECT_SEND_MESSAGE_WITH ("\"SnakesMushrooms\"");
+  }
+}
+
+@protocol FridaCalculator
+- (int)add:(int)value;
+- (int)sub:(int)value;
+@end
+
+@interface FridaDefaultCalculator : NSObject<FridaCalculator>
+@end
+
+@implementation FridaDefaultCalculator
+- (int)add:(int)value { return 1337 + value; }
+- (int)sub:(int)value { return 1337 - value; }
+@end
+
+SCRIPT_TESTCASE (class_can_be_implemented)
+{
+  @autoreleasepool
+  {
+    COMPILE_AND_LOAD_SCRIPT (
+        "const FridaJSCalculator = ObjC.registerClass({"
+            "name: \"FridaJSCalculator\","
+            "super: ObjC.classes.NSObject,"
+            "protocols: [ObjC.protocols.FridaCalculator],"
+            "methods: {"
+                "\"- init\": function () {"
+                    "const self = this.super.init();"
+                    "if (self !== null) {"
+                        "ObjC.bind(self, {"
+                            "foo: 1234"
+                        "});"
+                    "}"
+                    "return self;"
+                "},"
+                "\"- dealloc\": function () {"
+                    "ObjC.unbind(this.self);"
+                    "this.super.dealloc();"
+                "},"
+                "\"- add:\": function (value) {"
+                    "return this.data.foo + value;"
+                "},"
+                "\"- sub:\": function (value) {"
+                    "return this.data.foo - value;"
+                "}"
+             "}"
+        "});"
+        "send(FridaJSCalculator.$className);");
+    EXPECT_SEND_MESSAGE_WITH ("\"FridaJSCalculator\"");
+
+    id klass = objc_getClass ("FridaJSCalculator");
+    g_assert (klass != nil);
+    id calculator = [[[klass alloc] init] autorelease];
+    g_assert (calculator != nil);
+    g_assert_cmpint ([calculator add:6], ==, 1234 + 6);
+    g_assert_cmpint ([calculator sub:4], ==, 1234 - 4);
   }
 }
 
