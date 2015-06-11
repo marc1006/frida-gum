@@ -549,30 +549,21 @@
         };
 
         this.getObjectClassname = function (obj) {
-            if (obj instanceof NativePointer) {
-                var env = vm.getEnv();
-                var jklass = env.getObjectClass(obj);
-                var invokeObjectMethodNoArgs = env.method('pointer', []);
+            let handle = obj.hasOwnProperty('$handle') ? obj.$handle : obj;
+            if (handle instanceof NativePointer) {
+                let env = vm.getEnv();
+                let jklass = env.getObjectClass(obj);
+                let invokeObjectMethodNoArgs = env.method('pointer', []);
 
-                var stringObj = invokeObjectMethodNoArgs(env.handle, jklass, env.javaLangClass().getName);
-                var clsStr = env.stringFromJni(stringObj);
-                /*
-                 // first get the class object
-                 var classObj = invokeObjectMethodNoArgs(env.handle, jklass, env.javaLangObject().getClass);
-
-                 // now get the descriptor of it
-                 var cls = env.getObjectClass(classObj);
-                 var stringObj = invokeObjectMethodNoArgs(env.handle, cls, env.javaLangClass().getName);
-                 var clsStr = env.stringFromJni(stringObj);
-                 env.deleteLocalRef(classObj);
-                 env.deleteLocalRef(cls);
-                 */
+                let stringObj = invokeObjectMethodNoArgs(env.handle, jklass, env.javaLangClass().getName);
+                let clsStr = env.stringFromJni(stringObj);
+                env.deleteLocalRef(stringObj);
                 env.deleteLocalRef(jklass);
                 env.deleteLocalRef(stringObj);
                 //this.deleteLocalRef(throwable);
                 return clsStr;
             } else {
-                throw new Error('Parameter has to be an native pointer.');
+                throw new Error('Not a pointer and also not a class instance.');
             }
         };
 
