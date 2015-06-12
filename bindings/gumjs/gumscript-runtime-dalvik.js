@@ -145,10 +145,6 @@
             }
         });
 
-        this.api = function () {
-            return api;
-        };
-
         Object.defineProperty(this, 'getApplicationContext', {
             enumerable: true,
             get: function () {
@@ -156,41 +152,7 @@
                 return currentApplication.getApplicationContext();
             }
         });
-
-        Object.defineProperty(this, 'heapSourceBase', {
-            enumerable: true,
-            get: function () {
-                if (!this.available) {
-                    throw new Error("Dalvik runtime not available");
-                }
-                return api.dvmHeapSourceGetBase();
-            }
-        });
-
-        Object.defineProperty(this, 'heapSourceLimit', {
-            enumerable: true,
-            get: function () {
-                if (!this.available) {
-                    throw new Error("Dalvik runtime not available");
-                }
-                return api.dvmHeapSourceGetLimit();
-            }
-        });
-
-        Object.defineProperty(this, 'dvmIsValidObject', {
-            enumerable: true,
-            get: function (obj) {
-                if (!this.available) {
-                    throw new Error("Dalvik runtime not available");
-                }
-                if (obj instanceof NativePointer) {
-                    return api.dvmIsValidObject(obj);
-                } else {
-                    throw new Error('Parameter has to be an native pointer.');
-                }
-            }
-        });
-
+ 
         Object.defineProperty(this, 'api', {
             enumerable: true,
             get: function () {
@@ -335,12 +297,15 @@
             return classFactory.use(className);
         };
 
-        this.cast = function (obj, C) {
-            return classFactory.cast(obj, C);
+        this.choose = function (className, callbacks) {
+            if (classFactory.loader === null) {
+                throw new Error("Not allowed outside Dalvik.perform() callback");
+            }
+            return classFactory.choose(className, callbacks);
         };
 
-        this.castObject = function (obj, C, func) {
-            return classFactory.castObject(obj, C, func);
+        this.cast = function (obj, C) {
+            return classFactory.cast(obj, C);
         };
 
         this.getThreadPtr = function () {
@@ -437,7 +402,66 @@
                 }
             }
             return new C(C.__handle__, null);
-        }; 
+        };
+
+        this.choose = function (className, callbacks) {
+            const env = vm.getEnv();
+            const klass = this.use(className);
+
+            let enumerateInstances = function (className, callbacks) {
+                const thread = Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
+                const ptrClassObject = api.dvmDecodeIndirectRef(thread, klass.$classHandle);
+
+                const pattern = ptrClassObject.toMatchPattern();
+                const heapSourceBase = api.dvmHeapSourceGetBase();
+                const heapSourceLimit = api.dvmHeapSourceGetLimit();
+                const size = heapSourceLimit.toInt32() - heapSourceBase.toInt32();
+                Memory.scan(heapSourceBase, size, pattern, {
+                    onMatch: function (address, size) {
+                        if (api.dvmIsValidObject(address)) {
+                            Dalvik.perform(function () {
+                                const env = vm.getEnv();
+                                const thread = Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
+                                const localReference = api.addLocalReferenceFunc(thread, address);
+                                const instance = Dalvik.cast(localReference, klass);
+                                const stopMaybe = callbacks.onMatch(instance);
+                                env.deleteLocalRef(localReference);
+                                if (stopMaybe === 'stop') {
+                                    return 'stop';
+                                }
+                            });
+                        }
+                    },
+                    onError: function (reason) {
+                    },
+                    onComplete: function () {
+                        callbacks.onComplete();
+                    }
+                });
+            };
+
+            if (api.addLocalReferenceFunc === null) {
+                const libdvm = Process.getModuleByName('libdvm.so');
+                Memory.scan(libdvm.base, libdvm.size, '2D E9 F0 41 05 46 15 4E 0C 46 7E 44 11 B3 43 68',
+                    {
+                        onMatch: function (address, size) {
+                            // Note that on 32-bit ARM this address must have its least significant bit set to 0 for ARM functions, and 1 for Thumb functions. => So set it to 1
+                            if (Process.arch === 'arm') {
+                                address = address.or(1);
+                            }
+                            api.addLocalReferenceFunc = new NativeFunction(address, 'pointer', ['pointer', 'pointer']);
+                            enumerateInstances(className, callbacks);
+                            return 'stop';
+                        },
+                        onError: function (reason) {
+                        },
+                        onComplete: function () {
+                        }
+                    });
+            } else {
+                enumerateInstances(className, callbacks);
+            }
+        };
 
         this.cast = function (obj, klass) {
             var handle = obj.hasOwnProperty('$handle') ? obj.$handle : obj;
@@ -1118,7 +1142,6 @@
                             "return result;";
                     }
                 }
-
                 let f;
                 eval("f = function (" + argVariableNames.join(", ") + ") {" +
                     "var env = vm.getEnv();" +
@@ -1244,7 +1267,6 @@
                             var insSize = argsSize;
                             // parse method arguments
                             var jniArgInfo = 0x80000000;
-
 
                             Memory.writeU32(methodId.add(METHOD_OFFSET_ACCESS_FLAGS), accessFlags);
                             Memory.writeU16(methodId.add(METHOD_OFFSET_REGISTERS_SIZE), registersSize);
@@ -2330,14 +2352,18 @@
             return _api;
         }
 
-        var temporaryApi = {};
+        var temporaryApi = {
+            addLocalReferenceFunc: null
+        };
         var pending = [
             {
                 module: "libdvm.so",
                 functions: {
-                    // Object* dvmDecodeIndirectRef(Thread* self, jobject jobj);
+                    /*
+                     * Converts an indirect reference to to an object reference.
+                     */
                     "_Z20dvmDecodeIndirectRefP6ThreadP8_jobject": ["dvmDecodeIndirectRef", 'pointer', ['pointer', 'pointer']],
-                    // void dvmUseJNIBridge(Method* method, void* func);
+
                     "_Z15dvmUseJNIBridgeP6MethodPv": ["dvmUseJNIBridge", 'void', ['pointer', 'pointer']],
                     // bool dvmAddToReferenceTable(ReferenceTable* pRef, Object* obj)
                     // not needed anymore  "_Z22dvmAddToReferenceTableP14ReferenceTableP6Object": ["dvmAddToReferenceTable", 'uint8', ['pointer', 'pointer']],
@@ -2372,19 +2398,17 @@
                     "_Z12dvmDumpClassPK11ClassObjecti": ["dvmDumpClass", 'void', ['pointer', 'int32']],
 
                     /*
-                     * Gets the begining of the allocation for the HeapSource.
+                     * Returns the base of the HeapSource.
                      */
                     "_Z20dvmHeapSourceGetBasev": ["dvmHeapSourceGetBase", 'pointer', []],
 
                     /*
-                     * Returns a high water mark, between base and limit all objects must have been
-                     * allocated.
+                     * Returns the limit of the HeapSource.
                      */
                     "_Z21dvmHeapSourceGetLimitv": ["dvmHeapSourceGetLimit", 'pointer', []],
 
                     /*
-                     *  Returns true if <obj> points to a valid allocated object.
-                     *  bool dvmIsValidObject(const Object* obj)
+                     *  Returns true if the pointer points to a valid object.
                      */
                     "_Z16dvmIsValidObjectPK6Object": ["dvmIsValidObject", 'uint8', ['pointer']]
                 },
