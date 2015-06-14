@@ -3,9 +3,6 @@
 
     let _runtime = null;
     let _api = null;
-    const pointerSize = Process.pointerSize;
-    const msgSendBySignatureId = {};
-    const msgSendSuperBySignatureId = {};
 
     Object.defineProperty(this, 'ObjC', {
         enumerable: true,
@@ -18,11 +15,14 @@
     });
 
     function Runtime() {
+        const pointerSize = Process.pointerSize;
         const api = getApi();
         const classRegistry = new ClassRegistry();
         const protocolRegistry = new ProtocolRegistry();
         const scheduledCallbacks = [];
         const bindings = {};
+        const msgSendBySignatureId = {};
+        const msgSendSuperBySignatureId = {};
 
         Object.defineProperty(this, 'available', {
             enumerable: true,
@@ -199,7 +199,7 @@
                     handle = api.objc_lookUpClass(Memory.allocUtf8String(name));
                 if (handle.isNull())
                     return null;
-                return new ObjCObject(handle, true);
+                return new ObjCObject(handle, undefined, true);
             }
 
             function toJSON() {
@@ -316,24 +316,44 @@
             "toString": true,
             "valueOf": true,
             "$super": true,
+            "$class": true,
             "$className": true,
             "$protocols": true
         };
 
-        function ObjCObject(handle, cachedIsClass, superSpecifier) {
+        function ObjCObject(handle, protocol, cachedIsClass, superSpecifier) {
             let cachedClassHandle = null;
             let cachedSuper = null;
+            let cachedClass = null;
             let cachedClassName = null;
             let cachedProtocols = null;
-            let hasCachedMethodHandles = false;
-            const cachedMethodHandles = {};
-            const cachedMethodWrappers = {};
+            let cachedMethodNames = null;
+            let cachedProtocolMethods = null;
+            let respondsToSelector = null;
+            const cachedMethods = {};
+            const replacedMethods = {};
+            let weakRef = null;
 
-            return Proxy.create({
+            if (!(handle instanceof NativePointer)) {
+                let valid = false;
+                if (typeof handle === 'object' && handle.hasOwnProperty('handle')) {
+                    handle = handle.handle;
+                    valid = handle instanceof NativePointer;
+                }
+
+                if (!valid)
+                    throw new Error("Expected NativePointer or ObjC.Object instance");
+            }
+
+            const self = Proxy.create({
                 has(name) {
                     if (objCObjectBuiltins[name] !== undefined)
                         return true;
-                    return findMethodHandle(name) !== null;
+                    if (protocol) {
+                        const details = findProtocolMethod(name);
+                        return (details !== null && details.implemented);
+                    }
+                    return findMethod(name) !== null;
                 },
                 get(target, name) {
                     switch (name) {
@@ -354,12 +374,18 @@
                                     const specifier = Memory.alloc(2 * pointerSize);
                                     Memory.writePointer(specifier, handle);
                                     Memory.writePointer(specifier.add(pointerSize), superHandle);
-                                    cachedSuper = [new ObjCObject(handle, cachedIsClass, specifier)];
+                                    cachedSuper = [new ObjCObject(handle, undefined, cachedIsClass, specifier)];
                                 } else {
                                     cachedSuper = [null];
                                 }
                             }
                             return cachedSuper[0];
+                        case "$class":
+                            if (isClass())
+                                return null;
+                            if (cachedClass === null)
+                                cachedClass = new ObjCObject(classHandle(), undefined, true);
+                            return cachedClass;
                         case "$className":
                             if (cachedClassName === null) {
                                 if (superSpecifier)
@@ -380,8 +406,8 @@
                                         const numProtocols = Memory.readUInt(numProtocolsBuf);
                                         for (let i = 0; i !== numProtocols; i++) {
                                             const protocolHandle = Memory.readPointer(protocolHandles.add(i * pointerSize));
-                                            const protocol = new ObjCProtocol(protocolHandle);
-                                            cachedProtocols[protocol.name] = protocol;
+                                            const p = new ObjCProtocol(protocolHandle);
+                                            cachedProtocols[p.name] = p;
                                         }
                                     } finally {
                                         api.free(protocolHandles);
@@ -390,7 +416,15 @@
                             }
                             return cachedProtocols;
                         default:
-                            return getMethodWrapper(name);
+                            if (protocol) {
+                                const details = findProtocolMethod(name);
+                                if (details === null || !details.implemented)
+                                    throw new Error("Unable to find method '" + name + "'");
+                            }
+                            const wrapper = findMethodWrapper(name);
+                            if (wrapper === null)
+                                throw new Error("Unable to find method '" + name + "'");
+                            return wrapper;
                     }
                 },
                 set(target, name, value) {
@@ -411,36 +445,86 @@
                     };
                 },
                 keys() {
-                    if (!hasCachedMethodHandles) {
-                        let cur = api.object_getClass(handle);
-                        do {
-                            const numMethodsBuf = Memory.alloc(pointerSize);
-                            const methodHandles = api.class_copyMethodList(cur, numMethodsBuf);
-                            try {
-                                const numMethods = Memory.readUInt(numMethodsBuf);
-                                for (let i = 0; i !== numMethods; i++) {
-                                    const methodHandle = Memory.readPointer(methodHandles.add(i * pointerSize));
-                                    const sel = api.method_getName(methodHandle);
-                                    let name = jsMethodName(Memory.readUtf8String(api.sel_getName(sel)));
-                                    let serial = 1;
-                                    let n = name;
-                                    while (objCObjectBuiltins[n] !== undefined || cachedMethodHandles[n] !== undefined) {
-                                        serial++;
-                                        n = name + serial;
-                                    }
-                                    cachedMethodHandles[n] = methodHandle;
-                                }
-                            } finally {
-                                api.free(methodHandles);
-                            }
-                            cur = api.class_getSuperclass(cur);
-                        } while (!cur.isNull());
+                    if (cachedMethodNames === null) {
+                        if (!protocol) {
+                            const jsNames = {};
+                            const nativeNames = {};
 
-                        hasCachedMethodHandles = true;
+                            let cur = api.object_getClass(handle);
+                            do {
+                                const numMethodsBuf = Memory.alloc(pointerSize);
+                                const methodHandles = api.class_copyMethodList(cur, numMethodsBuf);
+                                const fullNamePrefix = isClass() ? "+ " : "- ";
+                                try {
+                                    const numMethods = Memory.readUInt(numMethodsBuf);
+                                    for (let i = 0; i !== numMethods; i++) {
+                                        const methodHandle = Memory.readPointer(methodHandles.add(i * pointerSize));
+                                        const sel = api.method_getName(methodHandle);
+                                        const nativeName = Memory.readUtf8String(api.sel_getName(sel));
+                                        if (nativeNames[nativeName] !== undefined)
+                                            continue;
+                                        nativeNames[nativeName] = nativeName;
+
+                                        const jsName = jsMethodName(nativeName);
+                                        let serial = 2;
+                                        let name = jsName;
+                                        while (jsNames[name] !== undefined) {
+                                            serial++;
+                                            name = jsName + serial;
+                                        }
+                                        jsNames[name] = name;
+
+                                        const fullName = fullNamePrefix + nativeName;
+                                        if (cachedMethods[fullName] === undefined) {
+                                            const details = {
+                                                sel: sel,
+                                                handle: methodHandle,
+                                                wrapper: null
+                                            };
+                                            cachedMethods[fullName] = details;
+                                            cachedMethods[name] = details;
+                                        }
+                                    }
+                                } finally {
+                                    api.free(methodHandles);
+                                }
+                                cur = api.class_getSuperclass(cur);
+                            } while (!cur.isNull());
+
+                            cachedMethodNames = Object.keys(jsNames);
+                        } else {
+                            const methodNames = [];
+
+                            const protocolMethods = allProtocolMethods();
+                            Object.keys(protocolMethods).forEach(function (methodName) {
+                                if (methodName[0] !== '+' && methodName[0] !== '-') {
+                                    const details = protocolMethods[methodName];
+                                    if (details.implemented)
+                                        methodNames.push(methodName);
+                                }
+                            });
+
+                            cachedMethodNames = methodNames;
+                        }
                     }
-                    return Object.keys(objCObjectBuiltins).concat(Object.keys(cachedMethodHandles));
+
+                    return cachedMethodNames;
                 }
             }, Object.getPrototypeOf(this));
+
+            if (protocol) {
+                respondsToSelector = !isClass() ? findMethodWrapper("- respondsToSelector:") : null;
+            }
+
+            return self;
+
+            function dispose() {
+                Object.keys(replacedMethods).forEach(function (key) {
+                    const methodHandle = ptr(key);
+                    const oldImp = replacedMethods[key];
+                    api.method_setImplementation(methodHandle, oldImp);
+                });
+            }
 
             function classHandle() {
                 if (cachedClassHandle === null)
@@ -450,69 +534,148 @@
 
             function isClass() {
                 if (cachedIsClass === undefined)
-                    cachedIsClass = api.object_isClass(handle);
+                    cachedIsClass = !!api.object_isClass(handle);
                 return cachedIsClass;
             }
 
-            function findMethodHandle(rawName) {
-                let methodHandle = cachedMethodHandles[rawName];
-                if (methodHandle !== undefined)
-                    return methodHandle;
+            function findMethod(rawName) {
+                let method = cachedMethods[rawName];
+                if (method !== undefined)
+                    return method;
 
-                const details = parseMethodName(rawName);
-                const kind = details[0];
-                const name = details[1];
+                const tokens = parseMethodName(rawName);
+                const kind = tokens[0];
+                const name = tokens[1];
+                const sel = selector(name);
+                const fullName = tokens[2];
                 const defaultKind = isClass() ? '+' : '-';
 
-                const sel = api.sel_registerName(Memory.allocUtf8String(name));
-                methodHandle = (kind === '+')
-                    ? api.class_getClassMethod(classHandle(), sel)
-                    : api.class_getInstanceMethod(classHandle(), sel);
-                if (methodHandle.isNull())
-                    return null;
+                if (protocol) {
+                    const details = findProtocolMethod(fullName);
+                    if (details !== null) {
+                        method = {
+                            sel: sel,
+                            types: details.types,
+                            wrapper: null
+                        };
+                    }
+                }
 
+                if (method === undefined) {
+                    const methodHandle = (kind === '+')
+                        ? api.class_getClassMethod(classHandle(), sel)
+                        : api.class_getInstanceMethod(classHandle(), sel);
+                    if (!methodHandle.isNull()) {
+                        method = {
+                            sel: sel,
+                            handle: methodHandle,
+                            wrapper: null
+                        };
+                    } else {
+                        if (!isClass() && kind === '-' && name !== "methodSignatureForSelector:" && "- methodSignatureForSelector:" in self) {
+                            const s = self.methodSignatureForSelector_(sel);
+                            const numArgs = s.numberOfArguments();
+                            const frameSize = numArgs * pointerSize;
+                            let types = s.methodReturnType() + frameSize;
+                            for (let i = 0; i !== numArgs; i++) {
+                                const frameOffset = (i * pointerSize);
+                                types += s.getArgumentTypeAtIndex_(i) + frameOffset;
+                            }
+                            method = {
+                                sel: sel,
+                                types: types,
+                                wrapper: null
+                            };
+                        } else {
+                            return null;
+                        }
+                    }
+                }
+
+                cachedMethods[fullName] = method;
                 if (kind === defaultKind)
-                    cachedMethodHandles[jsMethodName(name)] = methodHandle;
+                    cachedMethods[jsMethodName(name)] = method;
 
-                return methodHandle;
-            }
-
-            function getMethodWrapper(name) {
-                const method = findMethodWrapper(name);
-                if (method === null)
-                    throw new Error("Unable to find method '" + name + "'");
                 return method;
             }
 
-            function findMethodWrapper(rawName) {
-                let wrapper = cachedMethodWrappers[rawName];
-                if (wrapper !== undefined)
-                    return wrapper;
+            function findProtocolMethod(rawName) {
+                const protocolMethods = allProtocolMethods();
+                const details = protocolMethods[rawName];
+                return (details !== undefined) ? details : null;
+            }
 
-                const details = parseMethodName(rawName);
-                const kind = details[0];
-                const name = details[1];
-                const fullName = details[2];
+            function allProtocolMethods() {
+                if (cachedProtocolMethods === null) {
+                    const methods = {};
 
-                wrapper = cachedMethodWrappers[fullName];
-                if (wrapper !== undefined)
-                    return wrapper;
+                    const protocols = collectProtocols(protocol);
+                    const defaultKind = isClass() ? '+' : '-';
+                    Object.keys(protocols).forEach(function (name) {
+                        const p = protocols[name];
+                        const m = p.methods;
+                        Object.keys(m).forEach(function (fullMethodName) {
+                            const method = m[fullMethodName];
+                            const methodName = fullMethodName.substr(2);
+                            const kind = fullMethodName[0];
 
-                const sel = api.sel_registerName(Memory.allocUtf8String(name));
-                const methodHandle = (kind === '+')
-                    ? api.class_getClassMethod(classHandle(), sel)
-                    : api.class_getInstanceMethod(classHandle(), sel);
-                if (methodHandle.isNull())
+                            let didCheckImplemented = false;
+                            let implemented = false;
+                            const details = {
+                                types: method.types
+                            };
+                            Object.defineProperty(details, 'implemented', {
+                                get: function () {
+                                    if (!didCheckImplemented) {
+                                        if (method.required) {
+                                            implemented = true;
+                                        } else {
+                                            implemented = (respondsToSelector !== null && respondsToSelector.call(self, selector(methodName)));
+                                        }
+                                        didCheckImplemented = true;
+                                    }
+                                    return implemented;
+                                }
+                            });
+
+                            methods[fullMethodName] = details;
+                            if (kind === defaultKind)
+                                methods[jsMethodName(methodName)] = details;
+                        });
+                    });
+
+                    cachedProtocolMethods = methods;
+                }
+
+                return cachedProtocolMethods;
+            }
+
+            function findMethodWrapper(name) {
+                const method = findMethod(name);
+                if (method === null)
                     return null;
-                wrapper = makeMethodInvocationWrapper(methodHandle, sel, superSpecifier);
-
-                cachedMethodWrappers[fullName] = wrapper;
-
+                let wrapper = method.wrapper;
+                if (wrapper === null) {
+                    wrapper = makeMethodInvocationWrapper(method, self, superSpecifier, replaceMethodImplementation);
+                    method.wrapper = wrapper;
+                }
                 return wrapper;
             }
 
+            function replaceMethodImplementation(methodHandle, imp, oldImp) {
+                api.method_setImplementation(methodHandle, imp);
+
+                if (!imp.equals(oldImp))
+                    replacedMethods[methodHandle.toString()] = oldImp;
+                else
+                    delete replacedMethods[methodHandle.toString()];
+
+                if (weakRef === null)
+                    weakRef = WeakRef.bind(self, dispose);
+            }
+
             function parseMethodName(rawName) {
-                const match = /([+-])\s?(\S+)/.exec(rawName);
+                const match = /([+-])\s(\S+)/.exec(rawName);
                 let name, kind;
                 if (match === null) {
                     kind = isClass() ? '+' : '-';
@@ -651,6 +814,19 @@
             }
         }
 
+        function collectProtocols(p, acc) {
+            acc = acc || {};
+
+            acc[p.name] = p;
+
+            const parentProtocols = p.protocols;
+            Object.keys(parentProtocols).forEach(function (name) {
+                collectProtocols(parentProtocols[name], acc);
+            });
+
+            return acc;
+        }
+
         function registerProxy(properties) {
             const protocols = properties.protocols || [];
             const methods = properties.methods || {};
@@ -719,7 +895,7 @@
                 if (name in classRegistry)
                     throw new Error("Unable to register already registered class '" + name + "'");
             } else {
-                name = makeClassName;
+                name = makeClassName();
             }
             const superClass = (properties.super !== undefined) ? properties.super : classRegistry.NSObject;
             const protocols = properties.protocols || [];
@@ -817,8 +993,17 @@
             return binding;
         }
 
-        function makeMethodInvocationWrapper(handle, sel, superSpecifier) {
-            const types = Memory.readUtf8String(api.method_getTypeEncoding(handle));
+        function makeMethodInvocationWrapper(method, owner, superSpecifier, replaceImplementation) {
+            const sel = method.sel;
+            let handle = method.handle;
+            let types;
+            if (handle === undefined) {
+                handle = null;
+                types = method.types;
+            } else {
+                types = Memory.readUtf8String(api.method_getTypeEncoding(handle));
+            }
+
             const signature = parseSignature(types);
             const retType = signature.retType;
             const argTypes = signature.argTypes.slice(2);
@@ -857,16 +1042,21 @@
                 value: sel
             });
 
-            let implementation = null;
+            let oldImp = null;
             Object.defineProperty(m, 'implementation', {
                 enumerable: true,
                 get: function () {
-                    return new NativeFunction(api.method_getImplementation(handle), m.returnType, m.argumentTypes);
+                    const h = getHandle();
+
+                    return new NativeFunction(api.method_getImplementation(h), m.returnType, m.argumentTypes);
                 },
                 set: function (imp) {
-                    implementation = imp;
+                    const h = getHandle();
 
-                    api.method_setImplementation(handle, imp);
+                    if (oldImp === null)
+                        oldImp = api.method_getImplementation(h);
+
+                    replaceImplementation(h, imp, oldImp);
                 }
             });
 
@@ -886,6 +1076,36 @@
                 enumerable: true,
                 value: types
             });
+
+            function getHandle() {
+                if (handle === null) {
+                    if (owner.$class !== null) {
+                        let cur = owner;
+                        do {
+                            if ("- forwardingTargetForSelector:" in cur) {
+                                const target = cur.forwardingTargetForSelector_(sel);
+                                if (target === null)
+                                    break;
+                                const klass = target.$class;
+                                if (klass === null)
+                                    break;
+                                const h = api.class_getInstanceMethod(klass.handle, sel);
+                                if (!h.isNull())
+                                    handle = h;
+                                else
+                                    cur = target;
+                            } else {
+                                break;
+                            }
+                        } while (handle === null);
+                    }
+
+                    if (handle === null)
+                        throw new Error("Unable to find method handle of proxied function");
+                }
+
+                return handle;
+            }
 
             return m;
         }
@@ -949,7 +1169,10 @@
         }
 
         function jsMethodName(name) {
-            return name.replace(/:/g, "_");
+            let result = name.replace(/:/g, "_");
+            if (objCObjectBuiltins[result] !== undefined)
+                result += "2";
+            return result;
         }
 
         function getMsgSendImpl(signature) {
@@ -976,25 +1199,30 @@
 
         function unparseSignature(retType, argTypes) {
             const frameSize = argTypes.length * pointerSize;
-            return unparseType(retType) + frameSize + argTypes.map(function (argType, i) {
+            return typeIdFromAlias(retType) + frameSize + argTypes.map(function (argType, i) {
                 const frameOffset = (i * pointerSize);
-                return unparseType(argType) + frameOffset;
+                return typeIdFromAlias(argType) + frameOffset;
             }).join("");
         }
 
         function parseSignature(sig) {
-            let id = "";
+            const cursor = [sig, 0];
 
-            let t = nextType(sig);
-            const retType = parseType(t[0]);
-            id += retType.type;
+            parseQualifiers(cursor);
+            const retType = readType(cursor);
+            readNumber(cursor);
 
             const argTypes = [];
-            while (t[1].length > 0) {
-                t = nextType(t[1]);
-                const argType = parseType(t[0]);
-                id += argType.type;
+
+            let id = retType.type;
+
+            while (dataAvailable(cursor)) {
+                parseQualifiers(cursor);
+                const argType = readType(cursor);
+                readNumber(cursor);
                 argTypes.push(argType);
+
+                id += argType.type;
             }
 
             return {
@@ -1004,83 +1232,87 @@
             };
         }
 
-        function unparseType(t) {
-            const id = idByType[t];
-            if (id === undefined)
-                throw new Error("No known encoding for type " + t);
-            return id;
-        }
+        function readType(cursor) {
+            while (true) {
+                const c = readChar(cursor);
 
-        function parseType(t) {
-            const qualifiers = [];
-            while (t.length > 0) {
-                const q = qualifierById[t[0]];
-                if (q === undefined)
-                    break;
-                qualifiers.push(q);
-                t = t.substring(1);
-            }
-            const converter = converterById[simplifyType(t)];
-            if (converter === undefined)
-                throw new Error("No parser for type " + t);
-            return converter;
-        }
-
-        function simplifyType(t) {
-            if (t[0] === '^') {
-                switch (t[1]) {
-                    case '[':
-                    case '{':
-                    case '(':
-                        return t.substring(0, 2) + t.substring(t.length - 1);
-                }
-            }
-            return t;
-        }
-
-        function nextType(t) {
-            let type = "";
-            let n = 0;
-            let scope = null;
-            let depth = 0;
-            let foundFirstDigit = false;
-            while (n < t.length) {
-                const c = t[n];
-                if (scope !== null) {
-                    type += c;
-                    if (c === scope[0]) {
-                        depth++;
-                    } else if (c === scope[1]) {
-                        depth--;
-                        if (depth === 0) {
-                            scope = null;
-                        }
-                    }
+                const type = singularTypeById[c];
+                if (type !== undefined) {
+                    return type;
+                } else if (c === '[') {
+                    const length = readNumber(cursor);
+                    const elementType = readType(cursor);
+                    skipChar(cursor); // ']'
+                    return arrayType(length, elementType);
+                } else if (c === '{') {
+                    readUntil('=', cursor);
+                    const fields = [];
+                    do {
+                        fields.push(readType(cursor));
+                    } while (peekChar(cursor) !== '}');
+                    skipChar(cursor); // '}'
+                    return structType(fields);
+                } else if (c === '(') {
+                    readUntil('=', cursor);
+                    const fields = [];
+                    do {
+                        fields.push(readType(cursor));
+                    } while (peekChar(cursor) !== '}');
+                    skipChar(cursor); // ')'
+                    return unionType(fields);
+                } else if (c === 'b') {
+                    readNumber(cursor);
+                    return singularTypeById['i'];
+                } else if (c === '^') {
+                    readType(cursor);
+                    return singularTypeById['?'];
                 } else {
-                    const v = t.charCodeAt(n);
-                    const isDigit = v >= 0x30 && v <= 0x39;
-                    if (!foundFirstDigit) {
-                        foundFirstDigit = isDigit;
-                        if (!isDigit) {
-                            type += t[n];
-                            if (c === '[') {
-                                scope = '[]';
-                                depth = 1;
-                            } else if (c === '{') {
-                                scope = '{}';
-                                depth = 1;
-                            } else if (c === '(') {
-                                scope = '()';
-                                depth = 1;
-                            }
-                        }
-                    } else if (!isDigit) {
-                        break;
-                    }
+                    throw new Error("Unable to handle type " + id);
                 }
-                n++;
             }
-            return [type, t.substring(n)];
+        }
+
+        function readNumber(cursor) {
+            let result = "";
+            while (dataAvailable(cursor)) {
+                const c = peekChar(cursor);
+                const v = c.charCodeAt(0);
+                const isDigit = v >= 0x30 && v <= 0x39;
+                if (isDigit) {
+                    result += c;
+                    skipChar(cursor);
+                } else {
+                    break;
+                }
+            }
+            return parseInt(result);
+        }
+
+        function readUntil(token, cursor) {
+            const buffer = cursor[0];
+            const offset = cursor[1];
+            const index = buffer.indexOf(token, offset);
+            if (index === -1)
+                throw new Error("Expected token '" + token + "' not found");
+            const result = buffer.substring(offset, index);
+            cursor[1] = index + 1;
+            return result;
+        }
+
+        function readChar(cursor) {
+            return cursor[0][cursor[1]++];
+        }
+
+        function peekChar(cursor) {
+            return cursor[0][cursor[1]];
+        }
+
+        function skipChar(cursor) {
+            cursor[1]++;
+        }
+
+        function dataAvailable(cursor) {
+            return cursor[1] !== cursor[0].length;
         }
 
         const qualifierById = {
@@ -1093,24 +1325,19 @@
             'V': 'oneway'
         };
 
-        const fromNativeId = function (h) {
-            if (h.isNull()) {
-                return null;
-            } else if (h.toString(16) === this.handle.toString(16)) {
-                return this;
-            } else {
-                return new ObjCObject(h);
+        function parseQualifiers(cursor) {
+            const qualifiers = [];
+            while (true) {
+                const q = qualifierById[peekChar(cursor)];
+                if (q === undefined)
+                    break;
+                qualifiers.push(q);
+                skipChar(cursor);
             }
-        };
+            return qualifiers;
+        }
 
-        const toNativeId = function (v) {
-            if (typeof v === 'string') {
-                return classRegistry.NSString.stringWithUTF8String_(Memory.allocUtf8String(v));
-            }
-            return v;
-        };
-
-        const idByType = {
+        const idByAlias = {
             'char': 'c',
             'int': 'i',
             'int16': 's',
@@ -1131,9 +1358,80 @@
             'selector': ':'
         };
 
-        const converterById = {
+        function typeIdFromAlias(alias) {
+            const id = idByAlias[alias];
+            if (id === undefined)
+                throw new Error("No known encoding for type " + alias);
+            return id;
+        }
+
+        const fromNativeId = function (h) {
+            if (h.isNull()) {
+                return null;
+            } else if (h.toString(16) === this.handle.toString(16)) {
+                return this;
+            } else {
+                return new ObjCObject(h);
+            }
+        };
+
+        const toNativeId = function (v) {
+            if (typeof v === 'string') {
+                return classRegistry.NSString.stringWithUTF8String_(Memory.allocUtf8String(v));
+            }
+            return v;
+        };
+
+        function arrayType(length, elementType) {
+            return {
+                type: 'pointer'
+            };
+        }
+
+        function structType(fieldTypes) {
+            return {
+                type: fieldTypes.map(function (t) {
+                    return t.type;
+                }),
+                size: fieldTypes.reduce(function (totalSize, t) {
+                    return totalSize + t.size;
+                }, 0),
+                fromNative: function (v) {
+                    return v.map(function (v, i) {
+                        return fieldTypes[i].fromNative.call(this, v);
+                    }, this);
+                },
+                toNative: function (v) {
+                    return v.map(function (v, i) {
+                        return fieldTypes[i].toNative.call(this, v);
+                    }, this);
+                }
+            };
+        }
+
+        function unionType(fieldTypes) {
+            const largestType = fieldTypes.reduce(function (largest, t) {
+                if (t.size > largest.size)
+                    return t;
+                else
+                    return largest;
+            }, fieldTypes[0]);
+            return {
+                type: [largestType.type],
+                size: largestType.size,
+                fromNative: function (v) {
+                    return [largestType.fromNative.call(this, v)];
+                },
+                toNative: function (v) {
+                    return [largestType.toNative.call(this, v)];
+                }
+            };
+        }
+
+        const singularTypeById = {
             'c': {
                 type: 'char',
+                size: 1,
                 toNative: function (v) {
                     if (typeof v === 'boolean') {
                         return v ? 1 : 0;
@@ -1142,40 +1440,52 @@
                 }
             },
             'i': {
-                type: 'int'
+                type: 'int',
+                size: 4
             },
             's': {
-                type: 'int16'
+                type: 'int16',
+                size: 2
             },
             'l': {
-                type: 'int32'
+                type: 'int32',
+                size: 4
             },
             'q': {
-                type: 'int64'
+                type: 'int64',
+                size: 8
             },
             'C': {
-                type: 'uchar'
+                type: 'uchar',
+                size: 1
             },
             'I': {
-                type: 'uint'
+                type: 'uint',
+                size: 4
             },
             'S': {
-                type: 'uint16'
+                type: 'uint16',
+                size: 2
             },
             'L': {
-                type: 'uint32'
+                type: 'uint32',
+                size: 4
             },
             'Q': {
-                type: 'uint64'
+                type: 'uint64',
+                size: 8
             },
             'f': {
-                type: 'float'
+                type: 'float',
+                size: 4
             },
             'd': {
-                type: 'double'
+                type: 'double',
+                size: 8
             },
             'B': {
                 type: 'bool',
+                size: 1,
                 fromNative: function (v) {
                     return v ? true : false;
                 },
@@ -1184,10 +1494,12 @@
                 }
             },
             'v': {
-                type: 'void'
+                type: 'void',
+                size: 0
             },
             '*': {
                 type: 'pointer',
+                size: pointerSize,
                 fromNative: function (h) {
                     if (h.isNull()) {
                         return null;
@@ -1197,49 +1509,23 @@
             },
             '@': {
                 type: 'pointer',
+                size: pointerSize,
                 fromNative: fromNativeId,
                 toNative: toNativeId
             },
-            '@?': {
-                type: 'pointer'
-            },
             '#': {
                 type: 'pointer',
+                size: pointerSize,
                 fromNative: fromNativeId,
                 toNative: toNativeId
             },
             ':': {
-                type: 'pointer'
+                type: 'pointer',
+                size: pointerSize
             },
-            '^i': {
-                type: 'pointer'
-            },
-            '^q': {
-                type: 'pointer'
-            },
-            '^S': {
-                type: 'pointer'
-            },
-            '^^S': {
-                type: 'pointer'
-            },
-            '^Q': {
-                type: 'pointer'
-            },
-            '^v': {
-                type: 'pointer'
-            },
-            '^*': {
-                type: 'pointer'
-            },
-            '^@': {
-                type: 'pointer'
-            },
-            '^?': {
-                type: 'pointer'
-            },
-            '^{}': {
-                type: 'pointer'
+            '?': {
+                type: 'pointer',
+                size: pointerSize
             }
         };
     }
