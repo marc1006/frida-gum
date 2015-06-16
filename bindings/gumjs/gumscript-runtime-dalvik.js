@@ -249,6 +249,35 @@
             }
         });
 
+        this.runOnUiThread = function (fn) {
+            if (!this.available) {
+                throw new Error("Dalvik runtime not available");
+            }
+
+            vm.perform(function () {
+                var ActivityThread = classFactory.use("android.app.ActivityThread");
+                var Handler = classFactory.use("android.os.Handler");
+                var Looper = classFactory.use("android.os.Looper");
+
+                var looper = Looper.getMainLooper();
+                var handler = Handler.$new.overload("android.os.Looper").call(Handler, looper);
+                var message = handler.obtainMessage();
+                Handler.dispatchMessage.implementation = function (msg) {
+                    var sameHandler = this.$isSameObject(handler);
+                    if (sameHandler) {
+                        var app = ActivityThread.currentApplication();
+                        if (app !== null) {
+                            Handler.dispatchMessage.implementation = null;
+                            fn();
+                        }
+                    } else {
+                        this.dispatchMessage(msg);
+                    }
+                };
+                message.sendToTarget();
+            });
+        };
+
         this.perform = function (fn) {
             if (!this.available) {
                 throw new Error("Dalvik runtime not available");
@@ -502,6 +531,10 @@
 
             classes[name] = klass;
 
+            function isInstance() {
+                return Boolean(klass.$handle);
+            }
+
             function initializeClass() {
                 klass.__name__ = name;
                 klass.__handle__ = env.newGlobalRef(classHandle);
@@ -554,6 +587,17 @@
                     }
                 });
 
+                Object.defineProperty(klass.prototype, "$kind", {
+                    get: function () {
+                        let kind;
+                        if (isInstance()) {
+                            kind = 'instance';
+                        } else {
+                            kind = 'class';
+                        }
+                        return kind;
+                    }
+                });
 
                 addMethods();
                 addFields();
@@ -1622,7 +1666,7 @@
                 type: 'pointer',
                 size: 1,
                 isCompatible: function (v) {
-                    if (className === 'java.lang.String' && typeof v === 'string') {
+                    if ((className === 'java.lang.CharSequence' || className === 'java.lang.String') && typeof v === 'string') {
                         return true;
                     }
 
@@ -2419,6 +2463,9 @@
                     },
                     "gDvm": function (address) {
                         this.gDvm = address;
+                    },
+                    "dvm_dalvik_system_DexFile": function (address) {
+                        this.dvmDalvikSystemDexFile = address;
                     }
                 }
             }
