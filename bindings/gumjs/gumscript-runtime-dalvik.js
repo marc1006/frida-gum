@@ -444,34 +444,53 @@
                 const pattern = classObject.toMatchPattern();
                 const heapSourceBase = api.dvmHeapSourceGetBase();
                 const heapSourceLimit = api.dvmHeapSourceGetLimit();
-                const size = heapSourceLimit.toInt32() - heapSourceBase.toInt32();
-                Memory.scan(heapSourceBase, size, pattern, {
-                    onMatch: function (address, size) {
-                        if (api.dvmIsValidObject(address)) {
-                            Dalvik.perform(function () {
-                                const env = vm.getEnv();
-                                const thread = Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
-                                const localReference = api.addLocalReference(thread, address);
-                                let instance;
-                                try {
-                                    instance = Dalvik.cast(localReference, klass);
-                                } finally {
-                                    env.deleteLocalRef(localReference);
-                                }
-                                const stopMaybe = callbacks.onMatch(instance);
-                                if (stopMaybe === 'stop') {
-                                    return 'stop';
-                                }
-                            });
-                        }
-                    },
-                    onError: function (reason) {
-                        console.log('\n========\nError ' + reason+"\n=========\n");
-                    },
-                    onComplete: function () {
-                        callbacks.onComplete();
-                    }
+                let ranges = Process.enumerateRangesSync('r--').filter(function (range) {
+                    return range.base.toInt32() >= heapSourceBase.toInt32() && range.base.toInt32() <= heapSourceLimit.toInt32();
                 });
+
+                if (ranges.length === 0) {
+                    ranges = [{base: heapSourceBase, size: heapSourceLimit.toInt32() - heapSourceBase.toInt32()}];
+                }
+                for (let i = 0; i < ranges.length; i++) {
+                    const start = ranges[i].base;
+                    let size = ranges[i].size;
+
+                    // is the last range bigger than the heapSourceLimit? => if yes resize it
+                    if (i === ranges.length - 1) {
+                        const lastBaseAddress = start.toInt32();
+                        if (lastBaseAddress + size > heapSourceLimit.toInt32()) {
+                            size = heapSourceLimit.toInt32() - lastBaseAddress;
+                        }
+                    }
+
+                    Memory.scan(start, size, pattern, {
+                        onMatch: function (address, size) {
+                            if (api.dvmIsValidObject(address)) {
+                                Dalvik.perform(function () {
+                                    const env = vm.getEnv();
+                                    const thread = Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
+                                    const localReference = api.addLocalReference(thread, address);
+                                    let instance;
+                                    try {
+                                        instance = Dalvik.cast(localReference, klass);
+                                    } finally {
+                                        env.deleteLocalRef(localReference);
+                                    }
+                                    const stopMaybe = callbacks.onMatch(instance);
+                                    if (stopMaybe === 'stop') {
+                                        return 'stop';
+                                    }
+                                });
+                            }
+                        },
+                        onError: function (reason) {
+                            console.log('\n========\nError ' + reason + "\n=========\n");
+                        },
+                        onComplete: function () {
+                            callbacks.onComplete();
+                        }
+                    });
+                }
             };
 
             if (api.addLocalReference === null) {
