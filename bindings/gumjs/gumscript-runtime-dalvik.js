@@ -1001,9 +1001,8 @@
                         "try {";
                     if (retType.type === 'pointer') {
                         returnStatements += "rawResult = retType.toJni.call(this, result, env);" +
-                            "} catch (e) {" +
+                            "} finally {" +
                                 "env.popLocalFrame(NULL);" +
-                                "throw e;" +
                             "}" +
                             "return env.popLocalFrame(rawResult);";
                         returnNothing = "return NULL;";
