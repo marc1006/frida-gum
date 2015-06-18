@@ -152,7 +152,7 @@
                 return currentApplication.getApplicationContext();
             }
         });
- 
+
         Object.defineProperty(this, 'api', {
             enumerable: true,
             get: function () {
@@ -439,9 +439,9 @@
 
             let enumerateInstances = function (className, callbacks) {
                 const thread = Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
-                const ptrClassObject = api.dvmDecodeIndirectRef(thread, klass.$classHandle);
+                const classObject = api.dvmDecodeIndirectRef(thread, klass.$classHandle);
 
-                const pattern = ptrClassObject.toMatchPattern();
+                const pattern = classObject.toMatchPattern();
                 const heapSourceBase = api.dvmHeapSourceGetBase();
                 const heapSourceLimit = api.dvmHeapSourceGetLimit();
                 const size = heapSourceLimit.toInt32() - heapSourceBase.toInt32();
@@ -452,20 +452,25 @@
                                 const env = vm.getEnv();
                                 const thread = Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
                                 const localReference = api.addLocalReference(thread, address);
+                                let instance;
                                 try {
-                                    console.log(address.toString() + ' ' + localReference.toString());
-                                    const instance = Dalvik.cast(localReference, klass);
+                                    instance = Dalvik.cast(localReference, klass);
                                 } finally {
                                     env.deleteLocalRef(localReference);
                                 }
-                                const stopMaybe = callbacks.onMatch(instance);
-                                if (stopMaybe === 'stop') {
-                                    return 'stop';
+                                try {
+                                    const stopMaybe = callbacks.onMatch(instance);
+                                    if (stopMaybe === 'stop') {
+                                        return 'stop';
+                                    }
+                                } catch (e) {
+                                    console.log(e);
                                 }
                             });
                         }
                     },
                     onError: function (reason) {
+                        console.log('\n========\nError ' + reason+"\n=========\n");
                     },
                     onComplete: function () {
                         callbacks.onComplete();
@@ -736,7 +741,6 @@
                 if (type === STATIC_FIELD) {
                     invokeTarget = env.staticField(rawFieldType);
                 } else if (type === INSTANCE_FIELD) {
-
                     invokeTarget = env.field(rawFieldType);
                 } else {
                     throw new Error("Should not be the case");
@@ -749,21 +753,25 @@
                     "targetFieldId"
                 ];
 
+
                 var returnCapture, returnStatements;
                 if (rawFieldType === 'void') {
-                    throw new Error("Should not be the case");
-                }
-
-                if (fieldType.fromJni) {
-                    frameCapacity++;
-                    returnCapture = "var rawResult = ";
-                    returnStatements = "var result = fieldType.fromJni.call(this, rawResult, env);" +
-                        "env.popLocalFrame(NULL);" +
-                        "return result;";
+                    returnCapture = "";
+                    returnStatements = "env.popLocalFrame(NULL);";
                 } else {
-                    returnCapture = "var result = ";
-                    returnStatements = "env.popLocalFrame(NULL);" +
-                        "return result;";
+                    if (fieldType.fromJni) {
+                        frameCapacity++;
+                        returnCapture = "var rawResult = ";
+                        returnStatements = "var result;" +
+                            "try {" +
+                            "result = fieldType.fromJni.call(this, rawResult, env);" +
+                            "} finally {env.popLocalFrame(NULL);} " +
+                            "return result;";
+                    } else {
+                        returnCapture = "var result = ";
+                        returnStatements = "env.popLocalFrame(NULL);" +
+                            "return result;";
+                    }
                 }
 
                 let fu;
@@ -781,11 +789,13 @@
                     "synchronizeVtable.call(this, env, type === INSTANCE_FIELD);" +
                     returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
                     "} catch (e) {" +
+                        "console.log('fehler1');" +
                     "env.popLocalFrame(NULL);" +
                     "throw e;" +
                     "}" +
                     "var throwable = env.exceptionOccurred();" +
                     "if (!throwable.isNull()) {" +
+                        "console.log('fehler2');" +
                     "env.exceptionClear();" +
                     "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
                     "var descriptionStr = env.stringFromJni(description);" +
@@ -1603,10 +1613,10 @@
                     return typeof v === 'object' && v.hasOwnProperty('length');
                 },
                 fromJni: function () {
-                    throw new Error("Not yet implemented ([B)");
+                    throw new Error("Not yet implemented ([B)from");
                 },
                 toJni: function () {
-                    throw new Error("Not yet implemented ([B)");
+                    throw new Error("Not yet implemented ([B)to");
                 }
             },
             '[C': {
@@ -1792,8 +1802,10 @@
                 pendingException = e;
             }
 
-            if (!alreadyAttached) {
+            if (!alreadyAttached && this.tryGetEnv() !== null) {
+                console.log('hier');
                 this.detachCurrentThread();
+                console.log('hier2');
             }
 
             if (pendingException !== null) {
