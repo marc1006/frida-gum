@@ -458,13 +458,9 @@
                                 } finally {
                                     env.deleteLocalRef(localReference);
                                 }
-                                try {
-                                    const stopMaybe = callbacks.onMatch(instance);
-                                    if (stopMaybe === 'stop') {
-                                        return 'stop';
-                                    }
-                                } catch (e) {
-                                    console.log(e);
+                                const stopMaybe = callbacks.onMatch(instance);
+                                if (stopMaybe === 'stop') {
+                                    return 'stop';
                                 }
                             });
                         }
@@ -756,22 +752,21 @@
 
                 var returnCapture, returnStatements;
                 if (rawFieldType === 'void') {
-                    returnCapture = "";
-                    returnStatements = "env.popLocalFrame(NULL);";
+                    throw new Error("Should not be the case");
+                }
+
+                if (fieldType.fromJni) {
+                    frameCapacity++;
+                    returnCapture = "var rawResult = ";
+                    returnStatements = "var result;" +
+                        "try {" +
+                        "result = fieldType.fromJni.call(this, rawResult, env);" +
+                        "} finally {env.popLocalFrame(NULL);} " +
+                        "return result;";
                 } else {
-                    if (fieldType.fromJni) {
-                        frameCapacity++;
-                        returnCapture = "var rawResult = ";
-                        returnStatements = "var result;" +
-                            "try {" +
-                            "result = fieldType.fromJni.call(this, rawResult, env);" +
-                            "} finally {env.popLocalFrame(NULL);} " +
-                            "return result;";
-                    } else {
-                        returnCapture = "var result = ";
-                        returnStatements = "env.popLocalFrame(NULL);" +
-                            "return result;";
-                    }
+                    returnCapture = "var result = ";
+                    returnStatements = "env.popLocalFrame(NULL);" +
+                        "return result;";
                 }
 
                 let fu;
@@ -789,13 +784,11 @@
                     "synchronizeVtable.call(this, env, type === INSTANCE_FIELD);" +
                     returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
                     "} catch (e) {" +
-                        "console.log('fehler1');" +
                     "env.popLocalFrame(NULL);" +
                     "throw e;" +
                     "}" +
                     "var throwable = env.exceptionOccurred();" +
                     "if (!throwable.isNull()) {" +
-                        "console.log('fehler2');" +
                     "env.exceptionClear();" +
                     "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
                     "var descriptionStr = env.stringFromJni(description);" +
@@ -1802,10 +1795,8 @@
                 pendingException = e;
             }
 
-            if (!alreadyAttached && this.tryGetEnv() !== null) {
-                console.log('hier');
+            if (!alreadyAttached) { //&& this.tryGetEnv() !== null) {
                 this.detachCurrentThread();
-                console.log('hier2');
             }
 
             if (pendingException !== null) {
