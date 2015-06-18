@@ -451,10 +451,14 @@
                             Dalvik.perform(function () {
                                 const env = vm.getEnv();
                                 const thread = Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
-                                const localReference = api.addLocalReferenceFunc(thread, address);
-                                const instance = Dalvik.cast(localReference, klass);
+                                const localReference = api.addLocalReference(thread, address);
+                                try {
+                                    console.log(address.toString() + ' ' + localReference.toString());
+                                    const instance = Dalvik.cast(localReference, klass);
+                                } finally {
+                                    env.deleteLocalRef(localReference);
+                                }
                                 const stopMaybe = callbacks.onMatch(instance);
-                                env.deleteLocalRef(localReference);
                                 if (stopMaybe === 'stop') {
                                     return 'stop';
                                 }
@@ -469,7 +473,7 @@
                 });
             };
 
-            if (api.addLocalReferenceFunc === null) {
+            if (api.addLocalReference === null) {
                 const libdvm = Process.getModuleByName('libdvm.so');
                 Memory.scan(libdvm.base, libdvm.size, '2D E9 F0 41 05 46 15 4E 0C 46 7E 44 11 B3 43 68',
                     {
@@ -478,7 +482,7 @@
                             if (Process.arch === 'arm') {
                                 address = address.or(1);
                             }
-                            api.addLocalReferenceFunc = new NativeFunction(address, 'pointer', ['pointer', 'pointer']);
+                            api.addLocalReference = new NativeFunction(address, 'pointer', ['pointer', 'pointer']);
                             enumerateInstances(className, callbacks);
                             return 'stop';
                         },
@@ -2397,7 +2401,7 @@
         }
 
         var temporaryApi = {
-            addLocalReferenceFunc: null
+            addLocalReference: null
         };
         var pending = [
             {
