@@ -1051,7 +1051,7 @@
                 var f = function () {
                     var isInstance = this.$handle !== null;
                     if (methods[0].type !== INSTANCE_METHOD && isInstance) {
-                        throw new Error(name + ": cannot call static method by way of an instance");
+                     //   throw new Error(name + ": cannot call static method by way of an instance");
                     } else if (methods[0].type === INSTANCE_METHOD && !isInstance) {
                         if (name === 'toString') {
                             return "<" + this.$classWrapper.__name__ + ">";
