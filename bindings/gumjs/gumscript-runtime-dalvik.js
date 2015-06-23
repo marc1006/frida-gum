@@ -623,8 +623,7 @@
                     }
                 });
 
-                addMethods();
-                addFields();
+                addMethodsAndFields();
             }
 
             var dispose = function () {
@@ -704,47 +703,6 @@
                     throw new Error("No supported field");
 
                 return field;
-            };
-
-            var addFields = function () {
-                let invokeObjectMethodNoArgs = env.method('pointer', []);
-                let Field_getName = env.javaLangReflectField().getName;
-
-                let fieldHandles = klass.__fields__;
-                let jsFields = {};
-
-                var fields = invokeObjectMethodNoArgs(env.handle, classHandle, env.javaLangClass().getDeclaredFields);
-                var numFields = env.getArrayLength(fields);
-                for (let fieldIndex = 0; fieldIndex !== numFields; fieldIndex++) {
-                    let field = env.getObjectArrayElement(fields, fieldIndex);
-                    let name = invokeObjectMethodNoArgs(env.handle, field, Field_getName);
-                    let jsName = env.stringFromJni(name);
-                    env.deleteLocalRef(name);
-                    let fieldHandle = env.newGlobalRef(field);
-                    fieldHandles.push(fieldHandle);
-                    env.deleteLocalRef(field);
-
-                    jsFields[jsName] = fieldHandle;
-                }
-
-                // define access to the fields in the class (klass)
-                Object.keys(jsFields).forEach(function (name) {
-                    var m = null;
-                    Object.defineProperty(klass.prototype, name, {
-                        configurable: true,
-                        get: function () {
-                            if (m === null) {
-                                vm.perform(function () {
-                                    m = makeField(name, jsFields[name], vm.getEnv());
-                                });
-                            }
-                            // TODO for the moment it's an ugly bugfix...
-                            m.temp = this;
-
-                            return m;
-                        }
-                    });
-                });
             };
 
             var createField = function (type, fieldId, fieldType, env) {
@@ -861,7 +819,7 @@
                     "}" +
                     "}");
 
-                var f = {};
+                let f = {};
                 Object.defineProperty(f, "value", {
                     enumerable: true,
                     get: function () {
@@ -872,12 +830,13 @@
                     }
                 });
 
-                Object.defineProperty(f, 'holder', {
+                Object.defineProperty(f, 'fieldHolder', {
+                    configurable: true,
                     enumerable: true,
                     value: klass
                 });
 
-                Object.defineProperty(f, 'type', {
+                Object.defineProperty(f, 'fieldInstanceType', {
                     enumerable: true,
                     value: type
                 });
@@ -887,44 +846,98 @@
                     value: fieldType
                 });
 
-                var implementation = null;
-                var synchronizeVtable = function (env) {
+                const synchronizeVtable = function (env) {
                     return;
                 };
 
                 return f;
             };
 
-            var addMethods = function () {
-                let invokeObjectMethodNoArgs = env.method('pointer', []);
-                let Method_getName = env.javaLangReflectMethod().getName;
+            // This is an assign function which can copy accessors.
+            function myAssign(target, ...sources) {
+                sources.forEach(source => {
+                    Object.defineProperties(target, Object.keys(source).reduce((descriptors, key) => {
+                        descriptors[key] = Object.getOwnPropertyDescriptor(source, key);
+                        return descriptors;
+                    }, {}));
+                });
+                return target;
+            }
 
-                let methodHandles = klass.__methods__;
+            var addMethodsAndFields = function () {
+                const invokeObjectMethodNoArgs = env.method('pointer', []);
+                const Method_getName = env.javaLangReflectMethod().getName;
+                const Field_getName = env.javaLangReflectField().getName;
+                const fieldHandles = klass.__fields__;
+                const methodHandles = klass.__methods__;
                 let jsMethods = {};
+                let jsFields = {};
 
-                let methods = invokeObjectMethodNoArgs(env.handle, classHandle, env.javaLangClass().getDeclaredMethods);
-                let numMethods = env.getArrayLength(methods);
-                for (var methodIndex = 0; methodIndex !== numMethods; methodIndex++) {
-                    var method = env.getObjectArrayElement(methods, methodIndex);
-                    var name = invokeObjectMethodNoArgs(env.handle, method, Method_getName);
-                    var jsName = env.stringFromJni(name);
-                    env.deleteLocalRef(name);
-                    var methodHandle = env.newGlobalRef(method);
+                const methods = invokeObjectMethodNoArgs(env.handle, classHandle, env.javaLangClass().getDeclaredMethods);
+                const numMethods = env.getArrayLength(methods);
+                for (let methodIndex = 0; methodIndex < numMethods; methodIndex++) {
+                    const method = env.getObjectArrayElement(methods, methodIndex);
+                    const methodname = invokeObjectMethodNoArgs(env.handle, method, Method_getName);
+                    const methodjsName = env.stringFromJni(methodname);
+                    env.deleteLocalRef(methodname);
+                    const methodHandle = env.newGlobalRef(method);
                     methodHandles.push(methodHandle);
                     env.deleteLocalRef(method);
 
-                    var jsOverloads;
-                    if (jsMethods.hasOwnProperty(jsName)) {
-                        jsOverloads = jsMethods[jsName];
+                    let jsOverloads;
+                    if (jsMethods.hasOwnProperty(methodjsName)) {
+                        jsOverloads = jsMethods[methodjsName];
                     } else {
                         jsOverloads = [];
-                        jsMethods[jsName] = jsOverloads;
+                        jsMethods[methodjsName] = jsOverloads;
                     }
                     jsOverloads.push(methodHandle);
                 }
 
+                const fields = invokeObjectMethodNoArgs(env.handle, classHandle, env.javaLangClass().getDeclaredFields);
+                const numFields = env.getArrayLength(fields);
+                for (let fieldIndex = 0; fieldIndex < numFields; fieldIndex++) {
+                    const field = env.getObjectArrayElement(fields, fieldIndex);
+                    const fieldname = invokeObjectMethodNoArgs(env.handle, field, Field_getName);
+                    const fieldjsName = env.stringFromJni(fieldname);
+                    env.deleteLocalRef(fieldname);
+                    const fieldHandle = env.newGlobalRef(field);
+                    fieldHandles.push(fieldHandle);
+                    env.deleteLocalRef(field);
+
+                    jsFields[fieldjsName] = fieldHandle;
+                }
+
+                // define access to the fields in the class (klass)
+                const values = myAssign({}, jsFields, jsMethods);
+                Object.keys(values).forEach(function (name) {
+                    let v = null;
+                    Object.defineProperty(klass.prototype, name, {
+                        get: function () {
+                            if (v === null) {
+                                vm.perform(function () {
+                                    let f = {};
+                                    if (jsFields.hasOwnProperty(name)) {
+                                        f = makeField(name, jsFields[name], vm.getEnv());
+                                    }
+
+                                    let m = {};
+                                    if (jsMethods.hasOwnProperty(name)) {
+                                        m = makeMethodFromOverloads(name, jsMethods[name], vm.getEnv());
+                                    }
+                                    v = myAssign(m, f);
+                                });
+                            }
+                            // TODO for the moment it's an ugly bugfix...
+                            v.temp = this;
+
+                            return v;
+                        }
+                    });
+                });
+/*
                 Object.keys(jsMethods).forEach(function (name) {
-                    var m = null;
+                    let m = null;
                     Object.defineProperty(klass.prototype, name, {
                         configurable: true,
                         get: function () {
@@ -937,6 +950,7 @@
                         }
                     });
                 });
+                */
             };
 
             var makeMethodFromOverloads = function (name, overloads, env) {
@@ -1098,9 +1112,9 @@
                     }
                 });
 
-                Object.defineProperty(f, 'holder', {
+                Object.defineProperty(f, 'methodHolder', {
                     enumerable: true,
-                    get: methods[0].holder
+                    get: methods[0].methodHolder
                 });
 
                 Object.defineProperty(f, 'type', {
@@ -1241,7 +1255,7 @@
                     returnStatements +
                     "}");
 
-                Object.defineProperty(f, 'holder', {
+                Object.defineProperty(f, 'methodHolder', {
                     enumerable: true,
                     value: klass
                 });
@@ -1424,7 +1438,7 @@
                 method = method.overloads[0];
             }
 
-            var C = method.holder;
+            var C = method.methodHolder;
             var type = method.type;
             var retType = method.returnType;
             var argTypes = method.argumentTypes;
@@ -1722,6 +1736,9 @@
                     }
                 },
                 toJni: function (o, env) {
+                    if (o === null) {
+                        return NULL;
+                    }
                     if (typeof o === 'string') {
                         return env.newStringUtf(o);
                     }
