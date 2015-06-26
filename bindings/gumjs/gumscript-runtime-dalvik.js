@@ -791,10 +791,13 @@
 
                 var inputStatement = null;
                 if (fieldType.toJni) {
-                    inputStatement = "var input = fieldType.toJni.call(this, valu, env);";
+                    inputStatement =  "if (fieldType.isCompatible.call(this, valu) {" +
+                            "var input = fieldType.toJni.call(this, valu, env);" +
+                        "} else {" +
+                            "throw new Error(\"Expected return value compatible with '\" + rawFieldType + \"'.\");" +
+                        "}";
                 } else {
                     inputStatement = "var input = valu;";
-                    //   throw new Error('unable to convert to JNI ' + fieldType);
                 }
 
                 let mu;
@@ -1207,7 +1210,11 @@
                 ].concat(argTypes.map(function (t, i) {
                         if (t.toJni) {
                             frameCapacity++;
-                            return "argTypes[" + i + "].toJni.call(this, " + argVariableNames[i] + ", env)";
+                            return "if (argTypes[" + i + "].isCompatible.call(this, " + argVariableNames[i] + ") {" +
+                                "argTypes[" + i + "].toJni.call(this, " + argVariableNames[i] + ", env)" +
+                            "} else {" +
+                                "throw new Error(\"Expected return value compatible with '\" + rawRetType + \"'.\");" +
+                            "}";
                         }
                         return argVariableNames[i];
                     }));
@@ -1470,18 +1477,21 @@
                     frameCapacity++;
                     returnCapture = "var result = ";
                     returnStatements = "var rawResult;" +
-                        "try {";
+                        "try {" +
+                            "if (refType.isCompatible.call(this, result) {" +
+                                "rawResult = retType.toJni.call(this, result, env);" +
+                            "} else {" +
+                                "throw new Error(\"Expected return value compatible with '\" + rawRetType + \"'.\");" +
+                            "}";
                     if (retType.type === 'pointer') {
-                        returnStatements += "rawResult = retType.toJni.call(this, result, env);" +
-                            "} catch (e) {" +
+                        returnStatements += "} catch (e) {" +
                                 "env.popLocalFrame(NULL);" +
                                 "throw e;" +
                             "}" +
                             "return env.popLocalFrame(rawResult);";
                         returnNothing = "return NULL;";
                     } else {
-                        returnStatements += "rawResult = retType.toJni.call(this, result, env);" +
-                            "} finally {" +
+                        returnStatements += "} finally {" +
                                 "env.popLocalFrame(NULL);" +
                             "}" +
                             "return rawResult;";
@@ -1617,7 +1627,7 @@
                 size: 1,
                 byteSize: 1,
                 isCompatible: function (v) {
-                    return typeof v === 'number';
+                    return typeof v === 'number' && v >= -128 && v <= 127;
                 },
                 memoryRead: Memory.readS8
             },
@@ -1626,7 +1636,12 @@
                 size: 1,
                 byteSize: 2,
                 isCompatible: function (v) {
-                    return typeof v === 'string' && v.length === 1;
+                    if (typeof v === 'string' && v.length === 1) {
+                        const charCode = v.charCodeAt(0);
+                        return charCode >= 0 && charCode <= 65535;
+                    } else {
+                        return false;
+                    }
                 },
                 fromJni: function (c) {
                     return String.fromCharCode(c);
@@ -1641,7 +1656,7 @@
                 size: 1,
                 byteSize: 2,
                 isCompatible: function (v) {
-                    return typeof v === 'number';
+                    return typeof v === 'number' && v >= -32768 && v <= 32767;
                 },
                 memoryRead: Memory.readShort
             },
@@ -1650,6 +1665,7 @@
                 size: 1,
                 byteSize: 4,
                 isCompatible: function (v) {
+                    // TODO
                     return typeof v === 'number';
                 },
                 memoryRead: Memory.readS32
@@ -1659,6 +1675,7 @@
                 size: 2,
                 byteSize: 8,
                 isCompatible: function (v) {
+                    // TODO
                     return typeof v === 'number';
                 },
                 memoryRead: Memory.readS64
@@ -1668,6 +1685,7 @@
                 size: 1,
                 byteSize: 4,
                 isCompatible: function (v) {
+                    // TODO
                     return typeof v === 'number';
                 },
                 memoryRead: Memory.readFloat
@@ -1677,6 +1695,7 @@
                 size: 2,
                 byteSize: 8,
                 isCompatible: function (v) {
+                    // TODO
                     return typeof v === 'number';
                 },
                 memoryRead: Memory.readDouble
@@ -1685,15 +1704,15 @@
                 type: 'void',
                 size: 0,
                 byteSize: 0,
-                isCompatible: function () {
-                    return false;
+                isCompatible: function (v) {
+                    return v === undefined;
                 }
             },
             '[Z': {
                 type: 'pointer',
                 size: 1,
                 isCompatible: function (v) {
-                    return typeof v === 'object' && v.hasOwnProperty('length');
+                    return isCompatiblePrimitiveArray(v, 'boolean');
                 },
                 fromJni: function (h, env) {
                     return getPrimitiveArray(h, env.getArrayLength.bind(env), env.getBooleanArrayElements.bind(env), 'boolean', env.releaseBooleanArrayElements.bind(env));
@@ -1706,7 +1725,7 @@
                 type: 'pointer',
                 size: 1,
                 isCompatible: function (v) {
-                    return typeof v === 'object' && v.hasOwnProperty('length');
+                    return isCompatiblePrimitiveArray(v, 'byte');
                 },
                 fromJni: function (h, env) {
                     return getPrimitiveArray(h, env.getArrayLength.bind(env), env.getByteArrayElements.bind(env), 'byte', env.releaseByteArrayElements.bind(env));
@@ -1719,7 +1738,7 @@
                 type: 'pointer',
                 size: 1,
                 isCompatible: function (v) {
-                    return typeof v === 'object' && v.hasOwnProperty('length');
+                    return isCompatiblePrimitiveArray(v, 'char');
                 },
                 fromJni: function (h, env) {
                     return getPrimitiveArray(h, env.getArrayLength.bind(env), env.getCharArrayElements.bind(env), 'char', env.releaseCharArrayElements.bind(env));
@@ -1732,7 +1751,7 @@
                 type: 'pointer',
                 size: 1,
                 isCompatible: function (v) {
-                    return typeof v === 'object' && v.hasOwnProperty('length');
+                    return isCompatiblePrimitiveArray(v, 'double');
                 },
                 fromJni: function (h, env) {
                     return getPrimitiveArray(h, env.getArrayLength.bind(env), env.getDoubleArrayElements.bind(env), 'double', env.releaseDoubleArrayElements.bind(env));
@@ -1745,7 +1764,7 @@
                 type: 'pointer',
                 size: 1,
                 isCompatible: function (v) {
-                    return typeof v === 'object' && v.hasOwnProperty('length');
+                     return isCompatiblePrimitiveArray(v, 'float');
                 },
                 fromJni: function (h, env) {
                     return getPrimitiveArray(h, env.getArrayLength.bind(env), env.getFloatArrayElements.bind(env), 'float', env.releaseFloatArrayElements.bind(env));
@@ -1758,7 +1777,7 @@
                 type: 'pointer',
                 size: 1,
                 isCompatible: function (v) {
-                    return typeof v === 'object' && v.hasOwnProperty('length');
+                    return isCompatiblePrimitiveArray(v, 'int');
                 },
                 fromJni: function (h, env) {
                     return getPrimitiveArray(h, env.getArrayLength.bind(env), env.getIntArrayElements.bind(env), 'int', env.releaseIntArrayElements.bind(env));
@@ -1771,7 +1790,7 @@
                 type: 'pointer',
                 size: 1,
                 isCompatible: function (v) {
-                    return typeof v === 'object' && v.hasOwnProperty('length');
+                    return isCompatiblePrimitiveArray(v, 'long');
                 },
                 fromJni: function (h, env) {
                     return getPrimitiveArray(h, env.getArrayLength.bind(env), env.getLongArrayElements.bind(env), 'long', env.releaseLongArrayElements.bind(env));
@@ -1784,7 +1803,7 @@
                 type: 'pointer',
                 size: 1,
                 isCompatible: function (v) {
-                    return typeof v === 'object' && v.hasOwnProperty('length');
+                    return isCompatiblePrimitiveArray(v, 'short');
                 },
                 fromJni: function (h, env) {
                     return getPrimitiveArray(h, env.getArrayLength.bind(env), env.getShortArrayElements.bind(env), 'short', env.releaseShortArrayElements.bind(env));
@@ -1797,7 +1816,10 @@
                 type: 'pointer',
                 size: 1,
                 isCompatible: function (v) {
-                    return typeof v === 'object' && v.hasOwnProperty('length') && (v.length === 0 || typeof v[0] === 'string');
+                    return typeof v === 'object' && v.hasOwnProperty('length') &&
+                        Array.prototype.reduce.call(v, function (previous, current) {
+                            return previous && typeof current === 'string'
+                        }, true);
                 },
                 fromJni: function (h, env) {
                     var result = [];
@@ -1821,6 +1843,13 @@
                 }
             }
         };
+
+        function isCompatiblePrimitiveArray(v, typename) {
+            return typeof v === 'object' && v.hasOwnProperty('length') &&
+                Array.prototype.reduce.call(v, function (previous, current) {
+                    return previous && types[typename].isCompatible(current)
+                }, true);
+        }
 
         var objectType = function (className, unbox) {
             return {
