@@ -791,11 +791,7 @@
 
                 var inputStatement = null;
                 if (fieldType.toJni) {
-                    inputStatement =  "if (fieldType.isCompatible.call(this, valu) {" +
-                            "var input = fieldType.toJni.call(this, valu, env);" +
-                        "} else {" +
-                            "throw new Error(\"Expected return value compatible with '\" + rawFieldType + \"'.\");" +
-                        "}";
+                    inputStatement =  "var input = fieldType.toJni.call(this, valu, env);";
                 } else {
                     inputStatement = "var input = valu;";
                 }
@@ -1070,7 +1066,7 @@
                 var f = function () {
                     var isInstance = this.$handle !== null;
                     if (methods[0].type !== INSTANCE_METHOD && isInstance) {
-                     //   throw new Error(name + ": cannot call static method by way of an instance");
+                        throw new Error(name + ": cannot call static method by way of an instance");
                     } else if (methods[0].type === INSTANCE_METHOD && !isInstance) {
                         if (name === 'toString') {
                             return "<" + this.$classWrapper.__name__ + ">";
@@ -1210,11 +1206,7 @@
                 ].concat(argTypes.map(function (t, i) {
                         if (t.toJni) {
                             frameCapacity++;
-                            return "if (argTypes[" + i + "].isCompatible.call(this, " + argVariableNames[i] + ") {" +
-                                "argTypes[" + i + "].toJni.call(this, " + argVariableNames[i] + ", env)" +
-                            "} else {" +
-                                "throw new Error(\"Expected return value compatible with '\" + rawRetType + \"'.\");" +
-                            "}";
+                            return "argTypes[" + i + "].toJni.call(this, " + argVariableNames[i] + ", env);";
                         }
                         return argVariableNames[i];
                     }));
