@@ -871,42 +871,52 @@
                 const Field_getName = env.javaLangReflectField().getName;
                 const fieldHandles = klass.__fields__;
                 const methodHandles = klass.__methods__;
-                let jsMethods = {};
-                let jsFields = {};
+                const jsMethods = {};
+                const jsFields = {};
 
                 const methods = invokeObjectMethodNoArgs(env.handle, classHandle, env.javaLangClass().getDeclaredMethods);
                 const numMethods = env.getArrayLength(methods);
                 for (let methodIndex = 0; methodIndex < numMethods; methodIndex++) {
                     const method = env.getObjectArrayElement(methods, methodIndex);
-                    const methodname = invokeObjectMethodNoArgs(env.handle, method, Method_getName);
-                    const methodjsName = env.stringFromJni(methodname);
-                    env.deleteLocalRef(methodname);
-                    const methodHandle = env.newGlobalRef(method);
-                    methodHandles.push(methodHandle);
-                    env.deleteLocalRef(method);
-
-                    let jsOverloads;
-                    if (jsMethods.hasOwnProperty(methodjsName)) {
-                        jsOverloads = jsMethods[methodjsName];
-                    } else {
-                        jsOverloads = [];
-                        jsMethods[methodjsName] = jsOverloads;
+                    try {
+                        const methodName = invokeObjectMethodNoArgs(env.handle, method, Method_getName);
+                        try {
+                            const methodjsName = env.stringFromJni(methodName);
+                            const methodHandle = env.newGlobalRef(method);
+                            methodHandles.push(methodHandle);
+                            let jsOverloads;
+                            if (jsMethods.hasOwnProperty(methodjsName)) {
+                                jsOverloads = jsMethods[methodjsName];
+                            } else {
+                                jsOverloads = [];
+                                jsMethods[methodjsName] = jsOverloads;
+                            }
+                            jsOverloads.push(methodHandle);
+                        } finally {
+                            env.deleteLocalRef(methodName);
+                        }
+                    } finally {
+                        env.deleteLocalRef(method);
                     }
-                    jsOverloads.push(methodHandle);
                 }
 
                 const fields = invokeObjectMethodNoArgs(env.handle, classHandle, env.javaLangClass().getDeclaredFields);
                 const numFields = env.getArrayLength(fields);
                 for (let fieldIndex = 0; fieldIndex < numFields; fieldIndex++) {
                     const field = env.getObjectArrayElement(fields, fieldIndex);
-                    const fieldname = invokeObjectMethodNoArgs(env.handle, field, Field_getName);
-                    const fieldjsName = env.stringFromJni(fieldname);
-                    env.deleteLocalRef(fieldname);
-                    const fieldHandle = env.newGlobalRef(field);
-                    fieldHandles.push(fieldHandle);
-                    env.deleteLocalRef(field);
-
-                    jsFields[fieldjsName] = fieldHandle;
+                    try {
+                        const fieldName = invokeObjectMethodNoArgs(env.handle, field, Field_getName);
+                        try {
+                            const fieldjsName = env.stringFromJni(fieldName);
+                            const fieldHandle = env.newGlobalRef(field);
+                            fieldHandles.push(fieldHandle);
+                            jsFields[fieldjsName] = fieldHandle;
+                        } finally {
+                            env.deleteLocalRef(fieldName);
+                        }
+                    } finally {
+                        env.deleteLocalRef(field);
+                    }
                 }
 
                 // define access to the fields in the class (klass)
@@ -1206,7 +1216,7 @@
                 ].concat(argTypes.map(function (t, i) {
                         if (t.toJni) {
                             frameCapacity++;
-                            return "argTypes[" + i + "].toJni.call(this, " + argVariableNames[i] + ", env);";
+                            return "argTypes[" + i + "].toJni.call(this, " + argVariableNames[i] + ", env)";
                         }
                         return argVariableNames[i];
                     }));
@@ -1547,15 +1557,11 @@
             return new NativeCallback(f, rawRetType, ['pointer', 'pointer'].concat(rawArgTypes));
         };
 
-        var typeFromClassName = function (className) {
+        function typeFromClassName(className) {
             var type = types[className];
             if (!type) {
                 if (className.indexOf("[") === 0) {
-                    if (className.substring(1).indexOf("[") === 0) {
-                        throw new Error("Multidimensional arrays aren't implemented yet.");
-                    } else {
-                        type = arrayType(className.substring(1));
-                    }
+                    type = arrayType(className.substring(1));
                 } else {
                     type = objectType(className, true);
                 }
@@ -1570,9 +1576,9 @@
                 }
             }
             return result;
-        };
+        }
 
-        const getPrimitiveArray = function (arr, getArrayLengthFunc, getArrayElementsFunc, typename, releaseArrayElementsFunc) {
+        const fromJniPrimitiveArray = function (arr, getArrayLengthFunc, getArrayElementsFunc, typename, releaseArrayElementsFunc) {
             const result = [];
             const type = types[typename];
             const length = getArrayLengthFunc(arr);
@@ -1593,6 +1599,7 @@
 
             return result;
         };
+
 
         /*
          * http://docs.oracle.com/javase/6/docs/technotes/guides/jni/spec/types.html#wp9502
@@ -1650,7 +1657,7 @@
                 isCompatible: function (v) {
                     return typeof v === 'number' && v >= -32768 && v <= 32767;
                 },
-                memoryRead: Memory.readShort
+                memoryRead: Memory.readS16
             },
             'int': {
                 type: 'int32',
@@ -1707,7 +1714,7 @@
                     return isCompatiblePrimitiveArray(v, 'boolean');
                 },
                 fromJni: function (h, env) {
-                    return getPrimitiveArray(h, env.getArrayLength.bind(env), env.getBooleanArrayElements.bind(env), 'boolean', env.releaseBooleanArrayElements.bind(env));
+                    return fromJniPrimitiveArray(h, env.getArrayLength.bind(env), env.getBooleanArrayElements.bind(env), 'boolean', env.releaseBooleanArrayElements.bind(env));
                 },
                 toJni: function () {
                     throw new Error("Not yet implemented ([Z)");
@@ -1720,7 +1727,7 @@
                     return isCompatiblePrimitiveArray(v, 'byte');
                 },
                 fromJni: function (h, env) {
-                    return getPrimitiveArray(h, env.getArrayLength.bind(env), env.getByteArrayElements.bind(env), 'byte', env.releaseByteArrayElements.bind(env));
+                    return fromJniPrimitiveArray(h, env.getArrayLength.bind(env), env.getByteArrayElements.bind(env), 'byte', env.releaseByteArrayElements.bind(env));
                 },
                 toJni: function () {
                     throw new Error("Not yet implemented ([B)");
@@ -1733,7 +1740,7 @@
                     return isCompatiblePrimitiveArray(v, 'char');
                 },
                 fromJni: function (h, env) {
-                    return getPrimitiveArray(h, env.getArrayLength.bind(env), env.getCharArrayElements.bind(env), 'char', env.releaseCharArrayElements.bind(env));
+                    return fromJniPrimitiveArray(h, env.getArrayLength.bind(env), env.getCharArrayElements.bind(env), 'char', env.releaseCharArrayElements.bind(env));
                 },
                 toJni: function () {
                     throw new Error("Not yet implemented ([C)");
@@ -1746,7 +1753,7 @@
                     return isCompatiblePrimitiveArray(v, 'double');
                 },
                 fromJni: function (h, env) {
-                    return getPrimitiveArray(h, env.getArrayLength.bind(env), env.getDoubleArrayElements.bind(env), 'double', env.releaseDoubleArrayElements.bind(env));
+                    return fromJniPrimitiveArray(h, env.getArrayLength.bind(env), env.getDoubleArrayElements.bind(env), 'double', env.releaseDoubleArrayElements.bind(env));
                 },
                 toJni: function () {
                     throw new Error("Not yet implemented ([D)");
@@ -1759,7 +1766,7 @@
                      return isCompatiblePrimitiveArray(v, 'float');
                 },
                 fromJni: function (h, env) {
-                    return getPrimitiveArray(h, env.getArrayLength.bind(env), env.getFloatArrayElements.bind(env), 'float', env.releaseFloatArrayElements.bind(env));
+                    return fromJniPrimitiveArray(h, env.getArrayLength.bind(env), env.getFloatArrayElements.bind(env), 'float', env.releaseFloatArrayElements.bind(env));
                 },
                 toJni: function () {
                     throw new Error("Not yet implemented ([F)");
@@ -1772,7 +1779,7 @@
                     return isCompatiblePrimitiveArray(v, 'int');
                 },
                 fromJni: function (h, env) {
-                    return getPrimitiveArray(h, env.getArrayLength.bind(env), env.getIntArrayElements.bind(env), 'int', env.releaseIntArrayElements.bind(env));
+                    return fromJniPrimitiveArray(h, env.getArrayLength.bind(env), env.getIntArrayElements.bind(env), 'int', env.releaseIntArrayElements.bind(env));
                 },
                 toJni: function () {
                     throw new Error("Not yet implemented ([I)");
@@ -1785,7 +1792,7 @@
                     return isCompatiblePrimitiveArray(v, 'long');
                 },
                 fromJni: function (h, env) {
-                    return getPrimitiveArray(h, env.getArrayLength.bind(env), env.getLongArrayElements.bind(env), 'long', env.releaseLongArrayElements.bind(env));
+                    return fromJniPrimitiveArray(h, env.getArrayLength.bind(env), env.getLongArrayElements.bind(env), 'long', env.releaseLongArrayElements.bind(env));
                 },
                 toJni: function () {
                     throw new Error("Not yet implemented ([J)");
@@ -1798,7 +1805,7 @@
                     return isCompatiblePrimitiveArray(v, 'short');
                 },
                 fromJni: function (h, env) {
-                    return getPrimitiveArray(h, env.getArrayLength.bind(env), env.getShortArrayElements.bind(env), 'short', env.releaseShortArrayElements.bind(env));
+                    return fromJniPrimitiveArray(h, env.getArrayLength.bind(env), env.getShortArrayElements.bind(env), 'short', env.releaseShortArrayElements.bind(env));
                 },
                 toJni: function () {
                     throw new Error("Not yet implemented ([S)");
@@ -1814,17 +1821,9 @@
                         }, true);
                 },
                 fromJni: function (h, env) {
-                    var result = [];
-                    var length = env.getArrayLength(h);
-                    for (var i = 0; i !== length; i++) {
-                        var s = env.getObjectArrayElement(h, i);
-                        result.push(env.stringFromJni(s));
-                        env.deleteLocalRef(s);
-                    }
-                    return result;
+                    return fromJniObjectArray(h, env.getArrayLength.bind(env), env.getObjectArrayElement.bind(env), env.stringFromJni.bind(env));
                 },
                 toJni: function (strings, env) {
-                    // TODO check javaLangString...
                     var result = env.newObjectArray(strings.length, env.javaLangString().handle, NULL);
                     for (var i = 0; i !== strings.length; i++) {
                         var s = env.newStringUtf(strings[i]);
@@ -1836,6 +1835,31 @@
             }
         };
 
+        function fromJniObjectArray(arr, lengthFunc, getObjectArrayElementFunc, convertFromJniFunc, deleteRefFunc) {
+            const result = [];
+            const length = lengthFunc(arr);
+            for (let i = 0; i !== length; i++) {
+                const elem = getObjectArrayElementFunc(arr, i);
+                try {
+                    result.push(convertFromJniFunc(elem));
+                } finally {
+                    deleteRefFunc(elem);
+                }
+            }
+            return result;
+        }
+
+        /*
+        function toJniObjectArray(arr, env, classHandle, newElementFunc, )
+                         var result = env.newObjectArray(strings.length, env.javaLangString().handle, NULL);
+                    for (var i = 0; i !== strings.length; i++) {
+                        var s = env.newStringUtf(strings[i]);
+                        env.setObjectArrayElement(result, i, s);
+                        env.deleteLocalRef(s);
+                    }
+                    return result;
+                    } */
+
         function isCompatiblePrimitiveArray(v, typename) {
             return typeof v === 'object' && v.hasOwnProperty('length') &&
                 Array.prototype.reduce.call(v, function (previous, current) {
@@ -1843,7 +1867,7 @@
                 }, true);
         }
 
-        var objectType = function (className, unbox) {
+        function objectType(className, unbox) {
             return {
                 type: 'pointer',
                 size: 1,
@@ -1881,20 +1905,21 @@
             };
         };
 
-        var arrayType = function (rawElementClassName) {
+        function arrayType(rawElementClassName) {
             let elementClassName;
             let isPrimitive;
 
-            if (rawElementClassName[0] === "L" && rawElementClassName[rawElementClassName.length - 1] === ";") {
+            if (rawElementClassName.indexOf("[") === 0) {
+                elementClassName = rawElementClassName;
+            } else if (rawElementClassName[0] === "L" && rawElementClassName[rawElementClassName.length - 1] === ";") {
                 elementClassName = rawElementClassName.substring(1, rawElementClassName.length - 1);
                 isPrimitive = false;
-            } else {
+            } else if (rawElementClassName.indexOf("[") !== 0) {
                 elementClassName = rawElementClassName;
                 isPrimitive = true;
                 return types['[' + elementClassName];
-                //throw new Error("Primitive arrays not yet supported");
             }
-            var elementType = typeFromClassName(elementClassName);
+            const elementType = typeFromClassName(elementClassName);
             return {
                 type: 'pointer',
                 size: 1,
@@ -1907,10 +1932,10 @@
                     });
                 },
                 fromJni: function (h, env) {
-                    var result = [];
-                    var length = env.getArrayLength(h);
-                    for (var i = 0; i !== length; i++) {
-                        var handle = env.getObjectArrayElement(h, i);
+                    const result = [];
+                    const length = env.getArrayLength(h);
+                    for (let i = 0; i !== length; i++) {
+                        const handle = env.getObjectArrayElement(h, i);
                         try {
                             result.push(elementType.fromJni.call(this, handle, env));
                         } finally {
@@ -1920,16 +1945,16 @@
                     return result;
                 },
                 toJni: function (elements, env) {
-                    var elementClass = factory.use(elementClassName);
-                    var result = env.newObjectArray(elements.length, elementClass.$classHandle, NULL);
-                    for (var i = 0; i !== elements.length; i++) {
-                        var handle = elementType.toJni.call(this, elements[i], env);
+                    const elementClass = factory.use(elementClassName);
+                    const result = env.newObjectArray(elements.length, elementClass.$classHandle, NULL);
+                    for (let i = 0; i !== elements.length; i++) {
+                        const handle = elementType.toJni.call(this, elements[i], env);
                         env.setObjectArrayElement(result, i, handle);
                     }
                     return result;
                 }
             };
-        };
+        }
 
         initialize.call(this);
     };
