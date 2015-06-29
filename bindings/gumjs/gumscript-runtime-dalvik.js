@@ -1,3 +1,4 @@
+/* jshint esnext: true, evil: true */
 (function () {
     "use strict";
 
@@ -246,7 +247,7 @@
 
         Object.defineProperty(this, 'enumerateLoadedClasses', {
             enumerable: true,
-            value: function (callbacks) {
+            value: function(callbacks) {
                 _enumerateLoadedClasses(callbacks, true);
             }
         });
@@ -665,7 +666,7 @@
                         env.deleteLocalRef(types);
                     }
 
-                    jsMethods.push(makeMethod(CONSTRUCTOR_METHOD, methodId, jsRetType, jsArgTypes, env));
+                    jsMethods.push(makeMethod(basename(name), CONSTRUCTOR_METHOD, methodId, jsRetType, jsArgTypes, env));
                 }
                 env.deleteLocalRef(constructors);
 
@@ -760,7 +761,7 @@
                     "throw new Error(\"Out of memory\");" +
                     "}" +
                     "try {" +
-                    "synchronizeVtable.call(this, env, type === INSTANCE_FIELD);" +
+                    //"synchronizeVtable.call(this, env, type === INSTANCE_FIELD);" +
                     returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
                     "} catch (e) {" +
                     "env.popLocalFrame(NULL);" +
@@ -846,10 +847,6 @@
                     enumerable: true,
                     value: fieldType
                 });
-
-                const synchronizeVtable = function (env) {
-                    return;
-                };
 
                 return f;
             };
@@ -1010,7 +1007,7 @@
                         env.deleteLocalRef(argTypes);
                     }
 
-                    return makeMethod(jsType, methodId, jsRetType, jsArgTypes, env);
+                    return makeMethod(name, jsType, methodId, jsRetType, jsArgTypes, env);
                 }).filter(function (m) {
                     return m !== null;
                 });
@@ -1188,7 +1185,7 @@
                 return f;
             };
 
-            var makeMethod = function (type, methodId, retType, argTypes, env) {
+            var makeMethod = function (methodName, type, methodId, retType, argTypes, env) {
                 var targetMethodId = methodId;
                 var originalMethodId = null;
 
@@ -1242,26 +1239,26 @@
                     }
                 }
                 let f;
-                eval("f = function (" + argVariableNames.join(", ") + ") {" +
+                eval("f = function " + methodName +"(" + argVariableNames.join(", ") + ") {" +
                     "var env = vm.getEnv();" +
                     "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
-                    "env.exceptionClear();" +
-                    "throw new Error(\"Out of memory\");" +
+                        "env.exceptionClear();" +
+                        "throw new Error(\"Out of memory\");" +
                     "}" +
                     "try {" +
-                    "synchronizeVtable.call(this, env, type === INSTANCE_METHOD);" +
-                    returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
+                        "synchronizeVtable.call(this, env, type === INSTANCE_METHOD);" +
+                        returnCapture + "invokeTarget(" + callArgs.join(", ") + ");" +
                     "} catch (e) {" +
-                    "env.popLocalFrame(NULL);" +
-                    "throw e;" +
+                        "env.popLocalFrame(NULL);" +
+                        "throw e;" +
                     "}" +
                     "var throwable = env.exceptionOccurred();" +
                     "if (!throwable.isNull()) {" +
-                    "env.exceptionClear();" +
-                    "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
-                    "var descriptionStr = env.stringFromJni(description);" +
-                    "env.popLocalFrame(NULL);" +
-                    "throw new Error(descriptionStr);" +
+                        "env.exceptionClear();" +
+                        "var description = env.method('pointer', [])(env.handle, throwable, env.javaLangObject().toString);" +
+                        "var descriptionStr = env.stringFromJni(description);" +
+                        "env.popLocalFrame(NULL);" +
+                        "throw new Error(descriptionStr);" +
                     "}" +
                     returnStatements +
                     "}");
@@ -1283,16 +1280,12 @@
                     }
 
                     var thread = Memory.readPointer(env.handle.add(JNI_ENV_OFFSET_SELF));
-                    /*
-                     var objectPtr = api.dvmDecodeIndirectRef(thread, this.$handle);
-                     var classObject = Memory.readPointer(objectPtr.add(OBJECT_OFFSET_CLAZZ));
-                     */
                     var objectPtr = api.dvmDecodeIndirectRef(thread, instance ? this.$handle : this.$classHandle);
                     let classObject;
                     if (instance) {
                         classObject = Memory.readPointer(objectPtr.add(OBJECT_OFFSET_CLAZZ));
                     } else {
-                        classObject = objectPtr; //Memory.readPointer(objectPtr);
+                        classObject = objectPtr;
                     }
                     var key = classObject.toString(16);
                     var entry = patchedClasses[key];
@@ -1453,6 +1446,7 @@
             var type = method.type;
             var retType = method.returnType;
             var argTypes = method.argumentTypes;
+            var methodName = method.name;
             var rawRetType = retType.type;
             var rawArgTypes = argTypes.map(function (t) {
                 return t.type;
@@ -1480,10 +1474,10 @@
                     returnCapture = "var result = ";
                     returnStatements = "var rawResult;" +
                         "try {" +
-                            "if (refType.isCompatible.call(this, result) {" +
+                            "if (retType.isCompatible.call(this, result)) {" +
                                 "rawResult = retType.toJni.call(this, result, env);" +
                             "} else {" +
-                                "throw new Error(\"Expected return value compatible with '\" + rawRetType + \"'.\");" +
+                                "throw new Error(\"Implementation for " + methodName + " expected return value compatible with '" + retType.className + "'.\");" +
                             "}";
                     if (retType.type === 'pointer') {
                         returnStatements += "} catch (e) {" +
@@ -1507,7 +1501,7 @@
                 }
             }
             let f;
-            eval("f = function (" + ["envHandle", "thisHandle"].concat(argVariableNames).join(", ") + ") {" +
+            eval("f = function " + methodName + "(" + ["envHandle", "thisHandle"].concat(argVariableNames).join(", ") + ") {" +
                 "var env = new Env(envHandle);" +
                 "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
                 "return;" +
@@ -1619,16 +1613,17 @@
                 toJni: function (v) {
                     return v ? 1 : 0;
                 },
-                memoryRead: Memory.readU8
+                memoryRead: Memory.readU8,
+                memoryWrite: Memory.writeU8
             },
             'byte': {
                 type: 'int8',
                 size: 1,
                 byteSize: 1,
                 isCompatible: function (v) {
-                    return typeof v === 'number' && v >= -128 && v <= 127;
+                    return Number.isInteger(v) && v >= -128 && v <= 127;
                 },
-                memoryRead: Memory.readS8
+		        memoryRead: Memory.readS8
             },
             'char': {
                 type: 'uint16',
@@ -1655,7 +1650,7 @@
                 size: 1,
                 byteSize: 2,
                 isCompatible: function (v) {
-                    return typeof v === 'number' && v >= -32768 && v <= 32767;
+                    return Number.isInteger(v) && v >= -32768 && v <= 32767;
                 },
                 memoryRead: Memory.readS16
             },
@@ -1664,8 +1659,7 @@
                 size: 1,
                 byteSize: 4,
                 isCompatible: function (v) {
-                    // TODO
-                    return typeof v === 'number';
+                    return Number.isInteger(v) && v >= -2147483648 && v <= 2147483647;
                 },
                 memoryRead: Memory.readS32
             },
@@ -1674,8 +1668,8 @@
                 size: 2,
                 byteSize: 8,
                 isCompatible: function (v) {
-                    // TODO
-                    return typeof v === 'number';
+                    // JavaScripts safe integer range is to small for it
+                    return Number.isInteger(v); // && v >= -9223372036854775808 && v <= 9223372036854775807;
                 },
                 memoryRead: Memory.readS64
             },
@@ -1716,8 +1710,8 @@
                 fromJni: function (h, env) {
                     return fromJniPrimitiveArray(h, env.getArrayLength.bind(env), env.getBooleanArrayElements.bind(env), 'boolean', env.releaseBooleanArrayElements.bind(env));
                 },
-                toJni: function () {
-                    throw new Error("Not yet implemented ([Z)");
+                toJni: function (arr, env) {
+                    return toJniPrimitiveArray(arr, 'boolean', env.newBooleanArray.bind(env), env.setBooleanArrayRegion.bind(env));
                 }
             },
             '[B': {
@@ -1816,12 +1810,10 @@
                 size: 1,
                 isCompatible: function (v) {
                     return typeof v === 'object' && v.hasOwnProperty('length') &&
-                        Array.prototype.reduce.call(v, function (previous, current) {
-                            return previous && typeof current === 'string'
-                        }, true);
+                        Array.prototype.every.call(v, elem => typeof elem === 'string');
                 },
                 fromJni: function (h, env) {
-                    return fromJniObjectArray(h, env.getArrayLength.bind(env), env.getObjectArrayElement.bind(env), env.stringFromJni.bind(env));
+                    return fromJniObjectArray(h, env.getArrayLength.bind(env), env.getObjectArrayElement.bind(env), env.stringFromJni.bind(env), env.deleteLocalRef.bind(env));
                 },
                 toJni: function (strings, env) {
                     var result = env.newObjectArray(strings.length, env.javaLangString().handle, NULL);
@@ -1849,22 +1841,27 @@
             return result;
         }
 
-        /*
-        function toJniObjectArray(arr, env, classHandle, newElementFunc, )
-                         var result = env.newObjectArray(strings.length, env.javaLangString().handle, NULL);
-                    for (var i = 0; i !== strings.length; i++) {
-                        var s = env.newStringUtf(strings[i]);
-                        env.setObjectArrayElement(result, i, s);
-                        env.deleteLocalRef(s);
-                    }
-                    return result;
-                    } */
+        // we should have Memory.calloc and Memory.free
+        function toJniPrimitiveArray(arr, typename, newArrayFunc, setArrayFunc) {
+            const length = arr.length;
+            const type = types[typename];
+            const result = newArrayFunc(length);
+            const cArray = Memory.alloc(length * type.byteSize);
+            for (let i = 0; i < length; i++) {
+                if (type.toJni) {
+                    type.memoryWrite(cArray.add(i * type.byteSize), type.toJni(arr[i]));
+                } else {
+                    type.memoryWrite(cArray.add(i * type.byteSize), arr[i]);
+                }
+                //env.deleteLocalRef(s);
+            }
+            setArrayFunc(result, 0, length, cArray);
+            return result;
+        }
 
         function isCompatiblePrimitiveArray(v, typename) {
             return typeof v === 'object' && v.hasOwnProperty('length') &&
-                Array.prototype.reduce.call(v, function (previous, current) {
-                    return previous && types[typename].isCompatible(current)
-                }, true);
+                Array.prototype.every.call(v, elem => types[typename].isCompatible(elem));
         }
 
         function objectType(className, unbox) {
@@ -1892,9 +1889,7 @@
                     }
                 },
                 toJni: function (o, env) {
-                    if (o === undefined) {
-                        throw new Error("Expected value compatible with '" + className + "', got 'undefined'");
-                    } else if (o === null) {
+                    if (o === null) {
                         return NULL;
                     } else if (typeof o === 'string') {
                         return env.newStringUtf(o);
@@ -2003,7 +1998,7 @@
                 pendingException = e;
             }
 
-            if (!alreadyAttached) { //&& this.tryGetEnv() !== null) {
+            if (!alreadyAttached) {
                 this.detachCurrentThread();
             }
 
@@ -2205,9 +2200,9 @@
             return globalRef;
         }
 
-        function vtable() {
+        function vtable(instance) {
             if (cachedVtable === null) {
-                cachedVtable = Memory.readPointer(this.handle);
+                cachedVtable = Memory.readPointer(instance.handle);
             }
             return cachedVtable;
         }
@@ -2217,7 +2212,7 @@
             var impl = null;
             return function () {
                 if (impl === null) {
-                    impl = new NativeFunction(Memory.readPointer(vtable.call(this).add(offset * pointerSize)), retType, argTypes);
+                    impl = new NativeFunction(Memory.readPointer(vtable(this).add(offset * pointerSize)), retType, argTypes);
                 }
                 var args = [impl];
                 args = args.concat.apply(args, arguments);
@@ -2393,6 +2388,38 @@
             impl(this.handle, array, index, value);
         });
 
+        Env.prototype.newBooleanArray = proxy(175, 'pointer', ['pointer', 'int32'], function (impl, length) {
+            return impl(this.handle, length);
+        });
+
+        Env.prototype.newByteArray = proxy(176, 'pointer', ['pointer', 'int32'], function (impl, length) {
+            return impl(this.handle, length);
+        });
+
+        Env.prototype.newCharArray = proxy(177, 'pointer', ['pointer', 'int32'], function (impl, length) {
+            return impl(this.handle, length);
+        });
+
+        Env.prototype.newShortArray = proxy(178, 'pointer', ['pointer', 'int32'], function (impl, length) {
+            return impl(this.handle, length);
+        });
+
+        Env.prototype.newIntArray = proxy(179, 'pointer', ['pointer', 'int32'], function (impl, length) {
+            return impl(this.handle, length);
+        });
+
+        Env.prototype.newLongArray = proxy(180, 'pointer', ['pointer', 'int32'], function (impl, length) {
+            return impl(this.handle, length);
+        });
+
+        Env.prototype.newFloatArray = proxy(181, 'pointer', ['pointer', 'int32'], function (impl, length) {
+            return impl(this.handle, length);
+        });
+
+        Env.prototype.newDoubleArray = proxy(182, 'pointer', ['pointer', 'int32'], function (impl, length) {
+            return impl(this.handle, length);
+        });
+
         Env.prototype.getBooleanArrayElements = proxy(183, 'pointer', ['pointer', 'pointer', 'pointer'], function (impl, array, index) {
             return impl(this.handle, array, NULL);
         });
@@ -2457,12 +2484,34 @@
             impl(this.handle, array, cArray, JNI_ABORT);
         });
 
+        Env.prototype.setBooleanArrayRegion = proxy(207, 'void', ['pointer', 'pointer', 'int32', 'int32', 'pointer'], function (impl, array, start, length, cArray) {
+            impl(this.handle, array, start, length, cArray);
+        });
+
+/*
+207
+SetByteArrayRegion()
+208
+SetCharArrayRegion()
+209
+SetShortArrayRegion()
+210
+SetIntArrayRegion()
+211
+SetLongArrayRegion()
+212
+SetFloatArrayRegion()
+213
+SetDoubleArrayRegion()
+214
+*/
+
         var cachedMethods = {};
         var method = function (offset, retType, argTypes) {
             var key = offset + "|" + retType + "|" + argTypes.join(":");
             var m = cachedMethods[key];
             if (!m) {
-                m = new NativeFunction(Memory.readPointer(vtable.call(this).add(offset * pointerSize)), retType, ['pointer', 'pointer', 'pointer', '...'].concat(argTypes));
+                m = new NativeFunction(Memory.readPointer(vtable(this).add(offset * pointerSize)), retType, ['pointer', 'pointer', 'pointer', '...'].concat(argTypes));
                 cachedMethods[key] = m;
             }
             return m;
@@ -2571,7 +2620,7 @@
             return javaLangReflectMethod;
         };
 
-        var javaLangReflectField = null;
+        let javaLangReflectField = null;
         Env.prototype.javaLangReflectField = function () {
             if (javaLangReflectField === null) {
                 var handle = this.findClass("java/lang/reflect/Field");
@@ -2623,13 +2672,12 @@
             return javaLangReflectGenericArrayType;
         };
 
-        var javaLangString = null;
+        let javaLangString = null;
         Env.prototype.javaLangString = function () {
             if (javaLangString === null) {
-                var handle = this.findClass("java/lang/String");
+                const handle = this.findClass("java/lang/String");
                 javaLangString = {
                     handle: register(this.newGlobalRef(handle))
-                    // getGenericComponentType: this.getMethodId(handle, "getGenericComponentType", "()Ljava/lang/reflect/Type;")
                 };
                 this.deleteLocalRef(handle);
             }

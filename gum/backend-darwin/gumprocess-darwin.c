@@ -160,6 +160,11 @@ typedef struct segment_command_64 gum_segment_command_t;
 typedef struct nlist_64 gum_nlist_t;
 #endif
 
+#ifndef PROC_SETPC_NONE
+extern int proc_regionfilename (int pid, uint64_t address, void * buffer,
+    uint32_t buffersize);
+#endif
+
 typedef const struct dyld_all_image_infos * (* DyldGetAllImageInfosFunc) (
     void);
 
@@ -1150,15 +1155,20 @@ gum_darwin_enumerate_ranges (mach_port_t task,
                              GumFoundRangeFunc func,
                              gpointer user_data)
 {
+  int pid;
+  kern_return_t kr;
   mach_vm_address_t address = MACH_VM_MIN_ADDRESS;
   mach_vm_size_t size = (mach_vm_size_t) 0;
   natural_t depth = 0;
+
+  kr = pid_for_task (task, &pid);
+  if (kr != KERN_SUCCESS)
+    return;
 
   while (TRUE)
   {
     struct vm_region_submap_info_64 info;
     mach_msg_type_number_t info_count;
-    kern_return_t kr;
     GumPageProtection cur_prot;
 
     while (TRUE)
@@ -1189,13 +1199,26 @@ gum_darwin_enumerate_ranges (mach_port_t task,
     {
       GumMemoryRange range;
       GumRangeDetails details;
+      GumFileMapping file;
+      gchar file_path[MAXPATHLEN];
+      gint len;
 
       range.base_address = address;
       range.size = size;
 
       details.range = &range;
       details.prot = cur_prot;
-      details.file = NULL; /* TODO */
+      details.file = NULL;
+
+      len = proc_regionfilename (pid, address, file_path, sizeof (file_path));
+      file_path[len] = '\0';
+      if (len != 0)
+      {
+        file.path = file_path;
+        file.offset = 0; /* TODO */
+
+        details.file = &file;
+      }
 
       if (!func (&details, user_data))
         return;

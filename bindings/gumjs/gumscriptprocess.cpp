@@ -97,7 +97,7 @@ _gum_script_process_init (GumScriptProcess * self,
   process->Set (String::NewFromUtf8 (isolate, "enumerateModules"),
       FunctionTemplate::New (isolate, gum_script_process_on_enumerate_modules,
       data));
-  process->Set (String::NewFromUtf8 (isolate, "enumerateRanges"),
+  process->Set (String::NewFromUtf8 (isolate, "_enumerateRanges"),
       FunctionTemplate::New (isolate, gum_script_process_on_enumerate_ranges,
       data));
   process->Set (String::NewFromUtf8 (isolate, "enumerateMallocRanges"),
@@ -227,8 +227,9 @@ gum_script_process_thread_match (const GumThreadDetails * details,
           reinterpret_cast<const uint8_t *> (gum_script_thread_state_to_string (
           details->state))),
       core);
-  _gum_script_set (thread, "context", _gum_script_cpu_context_new (
-      &details->cpu_context, ctx->self->core), core);
+  Local<Object> cpu_context =
+      _gum_script_cpu_context_new (&details->cpu_context, ctx->self->core);
+  _gum_script_set (thread, "context", cpu_context, core);
 
   Handle<Value> argv[] = { thread };
   Local<Value> result = ctx->on_match->Call (ctx->receiver, 1, argv);
@@ -239,6 +240,10 @@ gum_script_process_thread_match (const GumThreadDetails * details,
     String::Utf8Value str (result);
     proceed = (strcmp (*str, "stop") != 0);
   }
+
+  _gum_script_cpu_context_free_later (
+      new GumPersistent<Object>::type (isolate, cpu_context),
+      core);
 
   return proceed;
 }
@@ -342,7 +347,7 @@ gum_script_process_handle_module_match (const GumModuleDetails * details,
 
 /*
  * Prototype:
- * Process.enumerateRanges(prot, callback)
+ * Process._enumerateRanges(prot, callback)
  *
  * Docs:
  * TBW
@@ -416,6 +421,15 @@ gum_script_process_handle_range_match (const GumRangeDetails * details,
   _gum_script_set_pointer (range, "base", details->range->base_address, core);
   _gum_script_set_uint (range, "size", details->range->size, core);
   _gum_script_set_ascii (range, "protection", prot_str, core);
+
+  const GumFileMapping * f = details->file;
+  if (f != NULL)
+  {
+    Local<Object> file (Object::New (isolate));
+    _gum_script_set_utf8 (range, "path", f->path, core);
+    _gum_script_set_uint (range, "offset", f->offset, core);
+    _gum_script_set (range, "file", file, core);
+  }
 
   Handle<Value> argv[] = {
     range

@@ -70,6 +70,10 @@ TEST_LIST_BEGIN (script)
   SCRIPT_TESTENTRY (long_can_be_written)
   SCRIPT_TESTENTRY (ulong_can_be_read)
   SCRIPT_TESTENTRY (ulong_can_be_written)
+  SCRIPT_TESTENTRY (float_can_be_read)
+  SCRIPT_TESTENTRY (float_can_be_written)
+  SCRIPT_TESTENTRY (double_can_be_read)
+  SCRIPT_TESTENTRY (double_can_be_written)
   SCRIPT_TESTENTRY (byte_array_can_be_read)
   SCRIPT_TESTENTRY (byte_array_can_be_written)
   SCRIPT_TESTENTRY (c_string_can_be_read)
@@ -94,7 +98,6 @@ TEST_LIST_BEGIN (script)
 #endif
   SCRIPT_TESTENTRY (frida_version_is_available)
   SCRIPT_TESTENTRY (process_arch_is_available)
-  SCRIPT_TESTENTRY (process_get_module_by_name)
   SCRIPT_TESTENTRY (process_platform_is_available)
   SCRIPT_TESTENTRY (process_pointer_size_is_available)
   SCRIPT_TESTENTRY (process_debugger_status_is_available)
@@ -104,8 +107,12 @@ TEST_LIST_BEGIN (script)
 #endif
   SCRIPT_TESTENTRY (process_modules_can_be_enumerated)
   SCRIPT_TESTENTRY (process_modules_can_be_enumerated_synchronously)
+  SCRIPT_TESTENTRY (process_module_can_be_looked_up_from_address)
+  SCRIPT_TESTENTRY (process_module_can_be_looked_up_from_name)
   SCRIPT_TESTENTRY (process_ranges_can_be_enumerated)
   SCRIPT_TESTENTRY (process_ranges_can_be_enumerated_synchronously)
+  SCRIPT_TESTENTRY (process_ranges_can_be_enumerated_with_neighbors_coalesced)
+  SCRIPT_TESTENTRY (process_range_can_be_looked_up_from_address)
 #ifdef HAVE_DARWIN
   SCRIPT_TESTENTRY (process_malloc_ranges_can_be_enumerated)
   SCRIPT_TESTENTRY (process_malloc_ranges_can_be_enumerated_synchronously)
@@ -719,13 +726,6 @@ SCRIPT_TESTCASE (process_arch_is_available)
 #endif
 }
 
-SCRIPT_TESTCASE (process_get_module_by_name)
-{
-  COMPILE_AND_LOAD_SCRIPT (
-      "send(Process.getModuleByName('%s') !== null);", SYSTEM_MODULE_NAME);
-  EXPECT_SEND_MESSAGE_WITH ("true");
-}
-
 SCRIPT_TESTCASE (process_platform_is_available)
 {
   COMPILE_AND_LOAD_SCRIPT ("send(Process.platform);");
@@ -801,6 +801,42 @@ SCRIPT_TESTCASE (process_modules_can_be_enumerated_synchronously)
   EXPECT_SEND_MESSAGE_WITH ("true");
 }
 
+SCRIPT_TESTCASE (process_module_can_be_looked_up_from_address)
+{
+  GModule * m;
+  gpointer f;
+  gboolean found;
+
+  m = g_module_open (SYSTEM_MODULE_NAME, G_MODULE_BIND_LAZY);
+  found = g_module_symbol (m, SYSTEM_MODULE_EXPORT, &f);
+  g_assert (found);
+  g_module_close (m);
+
+  COMPILE_AND_LOAD_SCRIPT (
+      "send(Process.findModuleByAddress(" GUM_PTR_CONST ") !== null);",
+      f);
+  EXPECT_SEND_MESSAGE_WITH ("true");
+
+  COMPILE_AND_LOAD_SCRIPT (
+      "send(Object.keys(Process.getModuleByAddress(" GUM_PTR_CONST
+      ")).length > 0);",
+      f);
+  EXPECT_SEND_MESSAGE_WITH ("true");
+}
+
+SCRIPT_TESTCASE (process_module_can_be_looked_up_from_name)
+{
+  COMPILE_AND_LOAD_SCRIPT (
+      "send(Process.findModuleByName('%s') !== null);",
+      SYSTEM_MODULE_NAME);
+  EXPECT_SEND_MESSAGE_WITH ("true");
+
+  COMPILE_AND_LOAD_SCRIPT (
+      "send(Object.keys(Process.getModuleByName('%s')).length > 0);",
+      SYSTEM_MODULE_NAME);
+  EXPECT_SEND_MESSAGE_WITH ("true");
+}
+
 SCRIPT_TESTCASE (process_ranges_can_be_enumerated)
 {
   COMPILE_AND_LOAD_SCRIPT (
@@ -821,6 +857,41 @@ SCRIPT_TESTCASE (process_ranges_can_be_enumerated_synchronously)
 {
   COMPILE_AND_LOAD_SCRIPT (
       "send(Process.enumerateRangesSync('--x').length > 1);");
+  EXPECT_SEND_MESSAGE_WITH ("true");
+}
+
+SCRIPT_TESTCASE (process_ranges_can_be_enumerated_with_neighbors_coalesced)
+{
+  COMPILE_AND_LOAD_SCRIPT (
+      "var a = Process.enumerateRangesSync('--x');"
+      "var b = Process.enumerateRangesSync({"
+        "protection: '--x',"
+        "coalesce: true"
+      "});"
+      "send(b.length <= a.length);");
+  EXPECT_SEND_MESSAGE_WITH ("true");
+}
+
+SCRIPT_TESTCASE (process_range_can_be_looked_up_from_address)
+{
+  GModule * m;
+  gpointer f;
+  gboolean found;
+
+  m = g_module_open (SYSTEM_MODULE_NAME, G_MODULE_BIND_LAZY);
+  found = g_module_symbol (m, SYSTEM_MODULE_EXPORT, &f);
+  g_assert (found);
+  g_module_close (m);
+
+  COMPILE_AND_LOAD_SCRIPT (
+      "send(Process.findRangeByAddress(" GUM_PTR_CONST ") !== null);",
+      f);
+  EXPECT_SEND_MESSAGE_WITH ("true");
+
+  COMPILE_AND_LOAD_SCRIPT (
+      "send(Object.keys(Process.getRangeByAddress(" GUM_PTR_CONST
+      ")).length > 0);",
+      f);
   EXPECT_SEND_MESSAGE_WITH ("true");
 }
 
@@ -1374,10 +1445,7 @@ SCRIPT_TESTCASE (invocations_provide_context_for_backtrace)
       "        .length > 0);"
       "  },"
       "  onLeave: function (retval) {"
-      "    try {"
-      "      send(Thread.backtrace(this.context, Backtracer.FUZZY).length > 0);"
-      "    } catch (e) {"
-      "    }"
+      "    send(Thread.backtrace(this.context, Backtracer.FUZZY).length > 0);"
       "  }"
       "});",
       target_function_int);
@@ -1385,9 +1453,7 @@ SCRIPT_TESTCASE (invocations_provide_context_for_backtrace)
   EXPECT_NO_MESSAGES ();
   target_function_int (7);
   EXPECT_SEND_MESSAGE_WITH ("true");
-#if !(defined (HAVE_IOS) && defined (HAVE_ARM64))
   EXPECT_SEND_MESSAGE_WITH ("true");
-#endif
   EXPECT_NO_MESSAGES ();
 }
 
@@ -1460,15 +1526,54 @@ SCRIPT_TESTCASE (interceptor_handles_invalid_arguments)
 
 SCRIPT_TESTCASE (interceptor_performance)
 {
+  GTimer * timer;
+  guint measurement[1000], i, t_min, t_max, t_total, t_avg;
+
   COMPILE_AND_LOAD_SCRIPT (
       "Interceptor.attach(" GUM_PTR_CONST ", {"
       "  onEnter: function (args) {"
-      "  },"
-      "  onLeave: function (retval) {"
       "  }"
       "});", target_function_int);
-  /* while (TRUE) */
+
+#if 1
+  timer = g_timer_new ();
+
+  for (i = 0; i != G_N_ELEMENTS (measurement); i++)
+  {
     target_function_int (7);
+  }
+
+  for (i = 0; i != G_N_ELEMENTS (measurement); i++)
+  {
+    gdouble elapsed;
+
+    g_timer_reset (timer);
+    target_function_int (7);
+    elapsed = g_timer_elapsed (timer, NULL);
+
+    measurement[i] = elapsed * G_USEC_PER_SEC;
+  }
+
+  t_min = G_MAXUINT;
+  t_max = 0;
+  t_total = 0;
+  for (i = 0; i != G_N_ELEMENTS (measurement); i++)
+  {
+    guint m = measurement[i];
+
+    t_min = MIN (m, t_min);
+    t_max = MAX (m, t_max);
+    t_total += m;
+  }
+  t_avg = t_total / G_N_ELEMENTS (measurement);
+
+  g_print ("min=%u max=%u avg=%u ", t_min, t_max, t_avg);
+
+  g_timer_destroy (timer);
+#else
+  while (TRUE)
+    target_function_int (7);
+#endif
 }
 
 SCRIPT_TESTCASE (memory_can_be_scanned)
@@ -1851,6 +1956,38 @@ SCRIPT_TESTCASE (ulong_can_be_written)
   g_assert_cmpint (val, ==, 4294967295);
 }
 
+SCRIPT_TESTCASE (float_can_be_read)
+{
+  float val = 123.456f;
+  COMPILE_AND_LOAD_SCRIPT ("send(Math.abs(Memory.readFloat(" GUM_PTR_CONST
+      ") - 123.456) < 0.00001);", &val);
+  EXPECT_SEND_MESSAGE_WITH ("true");
+}
+
+SCRIPT_TESTCASE (float_can_be_written)
+{
+  float val = 0.f;
+  COMPILE_AND_LOAD_SCRIPT ("Memory.writeFloat(" GUM_PTR_CONST ", 123.456);",
+      &val);
+  g_assert_cmpfloat (ABS (val - 123.456f), <, 0.00001f);
+}
+
+SCRIPT_TESTCASE (double_can_be_read)
+{
+  double val = 123.456;
+  COMPILE_AND_LOAD_SCRIPT ("send(Math.abs(Memory.readDouble(" GUM_PTR_CONST
+      ") - 123.456)  < 0.00001);", &val);
+  EXPECT_SEND_MESSAGE_WITH ("true");
+}
+
+SCRIPT_TESTCASE (double_can_be_written)
+{
+  double val = 0.0;
+  COMPILE_AND_LOAD_SCRIPT ("Memory.writeDouble(" GUM_PTR_CONST ", 123.456);",
+      &val);
+  g_assert_cmpfloat (ABS (val - 123.456), <, 0.00001);
+}
+
 SCRIPT_TESTCASE (byte_array_can_be_read)
 {
   guint8 buf[3] = { 0x13, 0x37, 0x42 };
@@ -2073,6 +2210,8 @@ SCRIPT_TESTCASE (invalid_read_results_in_exception)
       "U16",
       "S32",
       "U32",
+      "Float",
+      "Double",
       /*
        * We don't know if the compiler will decide to access the lower or higher
        * part first, so we can't know the exact error message for these two.
@@ -2111,6 +2250,8 @@ SCRIPT_TESTCASE (invalid_write_results_in_exception)
       "U16",
       "S32",
       "U32",
+      "Float",
+      "Double",
 #if GLIB_SIZEOF_VOID_P == 8
       "S64",
       "U64"

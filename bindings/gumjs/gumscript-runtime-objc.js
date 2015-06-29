@@ -1,3 +1,4 @@
+/* jshint esnext: true, evil: true */
 (function () {
     "use strict";
 
@@ -18,12 +19,15 @@
     function Runtime() {
         const pointerSize = Process.pointerSize;
         const api = getApi();
+        const realizedClasses = new Set([]);
         const classRegistry = new ClassRegistry();
         const protocolRegistry = new ProtocolRegistry();
         const scheduledCallbacks = [];
         const bindings = {};
         const msgSendBySignatureId = {};
         const msgSendSuperBySignatureId = {};
+        let cachedNSString = null;
+        let cachedNSStringCtor = null;
 
         Object.defineProperty(this, 'available', {
             enumerable: true,
@@ -147,12 +151,12 @@
             return Memory.readUtf8String(api.sel_getName(sel));
         }
 
-        const registryBuiltins = {
-            "hasOwnProperty": true,
-            "toJSON": true,
-            "toString": true,
-            "valueOf": true
-        };
+        const registryBuiltins = new Set([
+            "hasOwnProperty",
+            "toJSON",
+            "toString",
+            "valueOf"
+        ]);
 
         function ClassRegistry() {
             const cachedClasses = {};
@@ -160,7 +164,7 @@
 
             const registry = Proxy.create({
                 has(name) {
-                    if (registryBuiltins[name] !== undefined)
+                    if (registryBuiltins.has(name))
                         return true;
                     return findClass(name) !== null;
                 },
@@ -251,7 +255,7 @@
 
             const registry = Proxy.create({
                 has(name) {
-                    if (registryBuiltins[name] !== undefined)
+                    if (registryBuiltins.has(name))
                         return true;
                     return findProtocol(name) !== null;
                 },
@@ -340,22 +344,22 @@
             return registry;
         }
 
-        const objCObjectBuiltins = {
-            "prototype": true,
-            "handle": true,
-            "hasOwnProperty": true,
-            "toJSON": true,
-            "toString": true,
-            "valueOf": true,
-            "equals": true,
-            "$kind": true,
-            "$super": true,
-            "$superClass": true,
-            "$class": true,
-            "$className": true,
-            "$protocols": true,
-            "$methods": true
-        };
+        const objCObjectBuiltins = new Set([
+            "prototype",
+            "handle",
+            "hasOwnProperty",
+            "toJSON",
+            "toString",
+            "valueOf",
+            "equals",
+            "$kind",
+            "$super",
+            "$superClass",
+            "$class",
+            "$className",
+            "$protocols",
+            "$methods"
+        ]);
 
         function ObjCObject(handle, protocol, cachedIsClass, superSpecifier) {
             let cachedClassHandle = null;
@@ -375,9 +379,21 @@
 
             handle = getHandle(handle);
 
+            if (cachedIsClass === undefined) {
+                // We need to ensure the class is realized, otherwise calling APIs like object_isClass() will crash.
+                // The first message delivery will realize the class, but users intercepting calls to objc_msgSend()
+                // and inspecting the first argument will run into this situation.
+                const klass = api.object_getClass(handle);
+                const key = klass.toString();
+                if (!realizedClasses.has(key)) {
+                    api.objc_lookUpClass(api.class_getName(klass));
+                    realizedClasses.add(key);
+                }
+            }
+
             const self = Proxy.create({
                 has(name) {
-                    if (objCObjectBuiltins[name] !== undefined)
+                    if (objCObjectBuiltins.has(name))
                         return true;
                     if (protocol) {
                         const details = findProtocolMethod(name);
@@ -566,7 +582,7 @@
                         }
                     }
 
-                    return Object.keys(objCObjectBuiltins).concat(cachedMethodNames);
+                    return Array.from(objCObjectBuiltins).concat(cachedMethodNames);
                 }
             }, Object.getPrototypeOf(this));
 
@@ -624,9 +640,9 @@
                 }
 
                 if (method === undefined) {
-                    const methodHandle = (kind === '+')
-                        ? api.class_getClassMethod(classHandle(), sel)
-                        : api.class_getInstanceMethod(classHandle(), sel);
+                    const methodHandle = (kind === '+') ?
+                        api.class_getClassMethod(classHandle(), sel) :
+                        api.class_getInstanceMethod(classHandle(), sel);
                     if (!methodHandle.isNull()) {
                         method = {
                             sel: sel,
@@ -818,7 +834,7 @@
                                 const numProperties = Memory.readUInt(numBuf);
                                 for (let i = 0; i !== numProperties; i++) {
                                     const propertyHandle = Memory.readPointer(propertyHandles.add(i * pointerSize));
-                                    const name = Memory.readUtf8String(api.property_getName(propertyHandle));
+                                    const propName = Memory.readUtf8String(api.property_getName(propertyHandle));
                                     const attributes = {};
                                     const attributeEntries = api.property_copyAttributeList(propertyHandle, numBuf);
                                     if (!attributeEntries.isNull()) {
@@ -834,7 +850,7 @@
                                             api.free(attributeEntries);
                                         }
                                     }
-                                    cachedProperties[name] = attributes;
+                                    cachedProperties[propName] = attributes;
                                 }
                             } finally {
                                 api.free(propertyHandles);
@@ -1290,7 +1306,7 @@
 
         function jsMethodName(name) {
             let result = name.replace(/:/g, "_");
-            if (objCObjectBuiltins[result] !== undefined)
+            if (objCObjectBuiltins.has(result))
                 result += "2";
             return result;
         }
@@ -1366,23 +1382,23 @@
                     return arrayType(length, elementType);
                 } else if (c === '{') {
                     readUntil('=', cursor);
-                    const fields = [];
+                    const structFields = [];
                     do {
-                        fields.push(readType(cursor));
+                        structFields.push(readType(cursor));
                     } while (peekChar(cursor) !== '}');
                     skipChar(cursor); // '}'
-                    return structType(fields);
+                    return structType(structFields);
                 } else if (c === '(') {
                     readUntil('=', cursor);
-                    const fields = [];
+                    const unionFields = [];
                     do {
-                        fields.push(readType(cursor));
+                        unionFields.push(readType(cursor));
                     } while (peekChar(cursor) !== '}');
                     skipChar(cursor); // ')'
-                    return unionType(fields);
+                    return unionType(unionFields);
                 } else if (c === 'b') {
                     readNumber(cursor);
-                    return singularTypeById['i'];
+                    return singularTypeById.i;
                 } else if (c === '^') {
                     readType(cursor);
                     return singularTypeById['?'];
@@ -1497,7 +1513,11 @@
 
         const toNativeId = function (v) {
             if (typeof v === 'string') {
-                return classRegistry.NSString.stringWithUTF8String_(Memory.allocUtf8String(v));
+                if (cachedNSString === null) {
+                    cachedNSString = classRegistry.NSString;
+                    cachedNSStringCtor = cachedNSString.stringWithUTF8String_;
+                }
+                return cachedNSStringCtor.call(cachedNSString, Memory.allocUtf8String(v));
             }
             return v;
         };
@@ -1509,6 +1529,40 @@
         }
 
         function structType(fieldTypes) {
+            let fromNative, toNative;
+
+            if (fieldTypes.some(function (t) { return !!t.fromNative; })) {
+                const fromTransforms = fieldTypes.map(function (t) {
+                    if (t.fromNative)
+                        return t.fromNative;
+                    else
+                        return identityTransform;
+                });
+                fromNative = function (v) {
+                    return v.map(function (e, i) {
+                        return fromTransforms[i].call(this, e);
+                    });
+                };
+            } else {
+                fromNative = identityTransform;
+            }
+
+            if (fieldTypes.some(function (t) { return !!t.toNative; })) {
+                const toTransforms = fieldTypes.map(function (t) {
+                    if (t.toNative)
+                        return t.toNative;
+                    else
+                        return identityTransform;
+                });
+                toNative = function (v) {
+                    return v.map(function (e, i) {
+                        return toTransforms[i].call(this, e);
+                    });
+                };
+            } else {
+                toNative = identityTransform;
+            }
+
             return {
                 type: fieldTypes.map(function (t) {
                     return t.type;
@@ -1516,16 +1570,8 @@
                 size: fieldTypes.reduce(function (totalSize, t) {
                     return totalSize + t.size;
                 }, 0),
-                fromNative: function (v) {
-                    return v.map(function (v, i) {
-                        return fieldTypes[i].fromNative.call(this, v);
-                    }, this);
-                },
-                toNative: function (v) {
-                    return v.map(function (v, i) {
-                        return fieldTypes[i].toNative.call(this, v);
-                    }, this);
-                }
+                fromNative: fromNative,
+                toNative: toNative
             };
         }
 
@@ -1536,15 +1582,36 @@
                 else
                     return largest;
             }, fieldTypes[0]);
+
+            let fromNative, toNative;
+
+            if (largestType.fromNative) {
+                const fromTransform = largestType.fromNative;
+                fromNative = function (v) {
+                    return [fromTransform.call(this, v)];
+                };
+            } else {
+                fromNative = function (v) {
+                    return [v];
+                };
+            }
+
+            if (largestType.toNative) {
+                const toTransform = largestType.toNative;
+                toNative = function (v) {
+                    return [toTransform.call(this, v)];
+                };
+            } else {
+                toNative = function (v) {
+                    return [v];
+                };
+            }
+
             return {
                 type: [largestType.type],
                 size: largestType.size,
-                fromNative: function (v) {
-                    return [largestType.fromNative.call(this, v)];
-                },
-                toNative: function (v) {
-                    return [largestType.toNative.call(this, v)];
-                }
+                fromNative: fromNative,
+                toNative: toNative
             };
         }
 
@@ -1648,6 +1715,10 @@
                 size: pointerSize
             }
         };
+
+        function identityTransform(v) {
+            return v;
+        }
     }
 
     function getApi() {

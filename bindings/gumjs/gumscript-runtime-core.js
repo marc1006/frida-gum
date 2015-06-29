@@ -1,6 +1,9 @@
+/* jshint esnext: true */
 (function () {
-    var engine = this;
-    var dispatcher;
+    "use strict";
+
+    const engine = this;
+    let dispatcher;
 
     var initialize = function initialize() {
         dispatcher = new MessageDispatcher();
@@ -11,7 +14,7 @@
     Object.defineProperty(engine, 'recv', {
         enumerable: true,
         value: function recv() {
-            var type, callback;
+            let type, callback;
             if (arguments.length === 1) {
                 type = '*';
                 callback = arguments[0];
@@ -26,7 +29,7 @@
     Object.defineProperty(engine, 'send', {
         enumerable: true,
         value: function send(payload, data) {
-            var message = {
+            const message = {
                 type: 'send',
                 payload: payload
             };
@@ -46,9 +49,9 @@
         value: new NativePointer("0")
     });
 
-    var Console = function () {
+    const Console = function () {
         this.log = function () {
-            var message = {
+            const message = {
                 type: 'log',
                 payload: Array.prototype.join.call(arguments, " ")
             };
@@ -63,7 +66,7 @@
     Object.defineProperty(Memory, 'dup', {
         enumerable: true,
         value: function (mem, size) {
-            var result = Memory.alloc(size);
+            const result = Memory.alloc(size);
             Memory.copy(result, mem, size);
             return result;
         }
@@ -156,7 +159,7 @@
     Object.defineProperty(Process, 'enumerateThreadsSync', {
         enumerable: true,
         value: function () {
-            var threads = [];
+            const threads = [];
             Process.enumerateThreads({
                 onMatch: function (t) {
                     threads.push(t);
@@ -168,10 +171,68 @@
         }
     });
 
+    Object.defineProperty(Process, 'findModuleByAddress', {
+        enumerable: true,
+        value: function (address) {
+            let module = null;
+            Process.enumerateModules({
+                onMatch: function (m) {
+                    const base = m.base;
+                    if (base.compare(address) < 0 && base.add(m.size).compare(address) > 0) {
+                        module = m;
+                        return 'stop';
+                    }
+                },
+                onComplete: function () {
+                }
+            });
+            return module;
+        }
+    });
+
+    Object.defineProperty(Process, 'getModuleByAddress', {
+        enumerable: true,
+        value: function (address) {
+            const module = Process.findModuleByAddress(address);
+            if (module === null)
+                throw new Error("Unable to find module containing " + address);
+            return module;
+        }
+    });
+
+    Object.defineProperty(Process, 'findModuleByName', {
+        enumerable: true,
+        value: function (name) {
+            let module = null;
+            const nameLowercase = name.toLowerCase();
+            Process.enumerateModules({
+                onMatch: function (m) {
+                    if (m.name.toLowerCase() === nameLowercase) {
+                        module = m;
+                        return 'stop';
+                    }
+                },
+                onComplete: function () {
+                }
+            });
+            return module;
+        }
+    });
+
+    Object.defineProperty(Process, 'getModuleByName', {
+        enumerable: true,
+        value: function (name) {
+            const module = Process.findModuleByName(name);
+            if (module === null)
+                throw new Error("Unable to find module '" + name + "'");
+            return module;
+        }
+    });
+
     Object.defineProperty(Process, 'enumerateModulesSync', {
         enumerable: true,
         value: function () {
-            var modules = [];
+            const modules = [];
             Process.enumerateModules({
                 onMatch: function (m) {
                     modules.push(m);
@@ -183,11 +244,88 @@
         }
     });
 
+    Object.defineProperty(Process, 'findRangeByAddress', {
+        enumerable: true,
+        value: function (address) {
+            let range = null;
+            Process.enumerateRanges('---', {
+                onMatch: function (r) {
+                    const base = r.base;
+                    if (base.compare(address) < 0 && base.add(r.size).compare(address) > 0) {
+                        range = r;
+                        return 'stop';
+                    }
+                },
+                onComplete: function () {
+                }
+            });
+            return range;
+        }
+    });
+
+    Object.defineProperty(Process, 'getRangeByAddress', {
+        enumerable: true,
+        value: function (address) {
+            const range = Process.findRangeByAddress(address);
+            if (range === null)
+                throw new Error("Unable to find range containing " + address);
+            return range;
+        }
+    });
+
+    Object.defineProperty(Process, 'enumerateRanges', {
+        enumerable: true,
+        value: function (specifier, callbacks) {
+            let protection;
+            let coalesce = false;
+            if (typeof specifier === 'string') {
+                protection = specifier;
+            } else {
+                protection = specifier.protection;
+                coalesce = specifier.coalesce;
+            }
+
+            if (coalesce) {
+                let current = null;
+                const onMatch = callbacks.onMatch;
+                Process._enumerateRanges(protection, {
+                    onMatch: function (r) {
+                        if (current !== null) {
+                            if (r.base.equals(current.base.add(current.size)) && r.protection === current.protection) {
+                                const coalescedRange = {
+                                    base: current.base,
+                                    size: current.size + r.size,
+                                    protection: current.protection
+                                };
+                                if (current.hasOwnProperty('file'))
+                                    coalescedRange.file = current.file;
+                                Object.freeze(coalescedRange);
+                                current = coalescedRange;
+                            } else {
+                                onMatch(current);
+                                current = r;
+                            }
+                        } else {
+                            current = r;
+                        }
+                    },
+                    onComplete: function () {
+                        if (current !== null)
+                            onMatch(current);
+                        callbacks.onComplete();
+                    }
+                });
+            } else {
+                Process._enumerateRanges(protection, callbacks);
+            }
+        }
+    });
+
     Object.defineProperty(Process, 'enumerateRangesSync', {
         enumerable: true,
-        value: function (prot) {
-            var ranges = [];
-            Process.enumerateRanges(prot, {
+        value: function (specifier) {
+            const ranges = [];
+            Process.enumerateRanges(specifier, {
                 onMatch: function (r) {
                     ranges.push(r);
                 },
@@ -201,7 +339,7 @@
     Object.defineProperty(Process, 'enumerateMallocRangesSync', {
         enumerable: true,
         value: function () {
-            var ranges = [];
+            const ranges = [];
             Process.enumerateMallocRanges({
                 onMatch: function (r) {
                     ranges.push(r);
@@ -213,32 +351,10 @@
         }
     });
 
-    Object.defineProperty(Process, 'getModuleByName', {
-        enumerable: true,
-        value: function (name) {
-            var module = null;
-            var nameLowercase = name.toLowerCase();
-            Process.enumerateModules({
-                onMatch: function (m) {
-                    if (m.name.toLowerCase() === nameLowercase) {
-                        module = m;
-                        return 'stop';
-                    }
-                },
-                onComplete: function () {
-                    if (!module) {
-                        throw new Error("Unable to find module '" + name + "'");
-                    }
-                }
-            });
-            return module;
-        }
-    });
-
     Object.defineProperty(Module, 'enumerateExportsSync', {
         enumerable: true,
         value: function (name) {
-            var exports = [];
+            const exports = [];
             Module.enumerateExports(name, {
                 onMatch: function (e) {
                     exports.push(e);
@@ -253,7 +369,7 @@
     Object.defineProperty(Module, 'enumerateRangesSync', {
         enumerable: true,
         value: function (name, prot) {
-            var ranges = [];
+            const ranges = [];
             Module.enumerateRanges(name, prot, {
                 onMatch: function (r) {
                     ranges.push(r);
@@ -296,13 +412,13 @@
         return this.compare(ptr) === 0;
     };
 
-    var MessageDispatcher = function () {
-        var messages = [];
-        var operations = {};
+    const MessageDispatcher = function () {
+        const messages = [];
+        const operations = {};
 
-        var initialize = function initialize() {
+        function initialize() {
             engine._setIncomingMessageCallback(handleMessage);
-        };
+        }
 
         this.registerCallback = function registerCallback(type, callback) {
             var op = new MessageRecvOperation(callback);
@@ -311,17 +427,17 @@
             return op[0];
         };
 
-        var handleMessage = function handleMessage(rawMessage) {
+        function handleMessage(rawMessage) {
             messages.push(JSON.parse(rawMessage));
             dispatchMessages();
-        };
+        }
 
-        var dispatchMessages = function dispatchMessages() {
+        function dispatchMessages() {
             messages.splice(0, messages.length).forEach(dispatch);
-        };
+        }
 
-        var dispatch = function dispatch(message) {
-            var handlerType;
+        function dispatch(message) {
+            let handlerType;
             if (operations.hasOwnProperty(message.type)) {
                 handlerType = message.type;
             } else if (operations.hasOwnProperty('*')) {
@@ -330,30 +446,29 @@
                 messages.push(message);
                 return;
             }
-            var complete = operations[handlerType];
+            const complete = operations[handlerType];
             delete operations[handlerType];
             complete(message);
-        };
+        }
 
         initialize.call(this);
     };
 
-    var MessageRecvOperation = function (callback) {
-        var completed = false;
+    function MessageRecvOperation(callback) {
+        let completed = false;
 
         this.wait = function wait() {
-            while (!completed) {
+            while (!completed)
                 engine._waitForEvent();
-            }
         };
 
-        var complete = function complete(message) {
+        function complete(message) {
             callback(message);
             completed = true;
-        };
+        }
 
         return [this, complete];
-    };
+    }
 
     initialize.call(this);
 }).call(this);
