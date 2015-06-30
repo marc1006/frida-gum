@@ -638,7 +638,7 @@
                 var invokeObjectMethodNoArgs = env.method('pointer', []);
 
                 var jsMethods = [];
-                var jsRetType = getType('objectType', name, false);
+                var jsRetType = getTypeFromJniSignature('objectType', name, false);
                 var constructors = invokeObjectMethodNoArgs(env.handle, classHandle, env.javaLangClass().getDeclaredConstructors);
                 var numConstructors = env.getArrayLength(constructors);
                 for (var constructorIndex = 0; constructorIndex !== numConstructors; constructorIndex++) {
@@ -654,7 +654,7 @@
                         for (var typeIndex = 0; typeIndex !== numTypes; typeIndex++) {
                             var t = env.getObjectArrayElement(types, typeIndex);
                             try {
-                                var argType = typeFromJniClassName(env.getTypeName(t));
+                                var argType = getTypeFromJniSignature(env.getTypeName(t));
                                 jsArgTypes.push(argType);
                             } finally {
                                 env.deleteLocalRef(t);
@@ -693,7 +693,7 @@
                 let jsFieldType;
 
                 try {
-                    jsFieldType = typeFromJniClassName(env.getTypeName(fieldType));
+                    jsFieldType = getTypeFromJniSignature(env.getTypeName(fieldType));
                 } catch (e) {
                     return null;
                 } finally {
@@ -981,7 +981,7 @@
                     var jsArgTypes = [];
 
                     try {
-                        jsRetType = typeFromJniClassName(env.getTypeName(retType));
+                        jsRetType = getTypeFromJniSignature(env.getTypeName(retType));
                     } catch (e) {
                         env.deleteLocalRef(argTypes);
                         return null;
@@ -995,7 +995,7 @@
                             var t = env.getObjectArrayElement(argTypes, argTypeIndex);
                             try {
                                 var argClassName = (isVarArgs && argTypeIndex === numArgTypes - 1) ? env.getArrayTypeName(t) : env.getTypeName(t);
-                                var argType = typeFromJniClassName(argClassName);
+                                var argType = getTypeFromJniSignature(argClassName);
                                 jsArgTypes.push(argType);
                             } finally {
                                 env.deleteLocalRef(t);
@@ -1036,7 +1036,7 @@
 
                         Object.defineProperty(defaultValueOf, 'returnType', {
                             enumerable: true,
-                            value: typeFromJniClassName('int')
+                            value: getTypeFromJniSignature('int')
                         });
 
                         Object.defineProperty(defaultValueOf, 'argumentTypes', {
@@ -1551,14 +1551,8 @@
             return new NativeCallback(f, rawRetType, ['pointer', 'pointer'].concat(rawArgTypes));
         };
 
-        /*
-         * http://docs.oracle.com/javase/6/docs/technotes/guides/jni/spec/types.html#wp9502
-         * http://www.liaohuqiu.net/posts/android-object-size-dalvik/
-         */
-        function getType(typename, className, unbox) {
-
-
-            switch (typename) {
+        function getTypeHelper(type, signature, unbox) {
+            switch (type) {
                 case 'boolean':
                     return {
                         type: 'uint8',
@@ -1817,32 +1811,20 @@
                             return fromJniObjectArray(h, env.getArrayLength.bind(env), env.getObjectArrayElement.bind(env), env.stringFromJni.bind(env), env.deleteLocalRef.bind(env));
                         },
                         toJni: function (strings, env) {
-                            var result = env.newObjectArray(strings.length, env.javaLangString().handle, NULL);
-                            for (var i = 0; i !== strings.length; i++) {
-                                var s = env.newStringUtf(strings[i]);
-                                env.setObjectArrayElement(result, i, s);
-                                env.deleteLocalRef(s);
-                            }
-                            return result;
+                            return toJniObjectArray(strings, env.newObjectArray.bind(env), env.javaLangString().handle,
+                                function (i, result) {
+                                    const s = env.newStringUtf(strings[i]);
+                                    try {
+                                        env.setObjectArrayElement(result, i, s);
+                                    } finally {
+                                        env.deleteLocalRef(s);
+                                    }
+                                });
                         }
                     };
                     break;
                 case 'objectArray':
-                    let elementClassName;
-                    let isPrimitive;
-                    const rawElementClassName = className;
-
-                    if (rawElementClassName.indexOf("[") === 0) {
-                        elementClassName = rawElementClassName;
-                    } else if (rawElementClassName[0] === "L" && rawElementClassName[rawElementClassName.length - 1] === ";") {
-                        elementClassName = rawElementClassName.substring(1, rawElementClassName.length - 1);
-                        isPrimitive = false;
-                    } else {
-                        elementClassName = rawElementClassName;
-                        isPrimitive = true;
-                        return getType['[' + elementClassName];
-                    }
-                    const elementType = typeFromJniClassName(elementClassName);
+                    const elementType = getTypeFromJniSignature(signature);
                     return {
                         type: 'pointer',
                         size: 1,
@@ -1868,13 +1850,23 @@
                             return result;
                         },
                         toJni: function (elements, env) {
-                            const elementClass = factory.use(elementClassName);
-                            const result = env.newObjectArray(elements.length, elementClass.$classHandle, NULL);
-                            for (let i = 0; i !== elements.length; i++) {
-                                const handle = elementType.toJni.call(this, elements[i], env);
-                                env.setObjectArrayElement(result, i, handle);
+                            let classHandle;
+                            if (signature.indexOf("[") === 0) {
+                                classHandle = env.findClass(signature.replace(/\./g, "/"));
+                            } else {
+                                const elementClass = factory.use(signature);
+                                classHandle = elementClass.$classHandle;
                             }
-                            return result;
+
+                            return toJniObjectArray(elements, env.newObjectArray.bind(env), classHandle,
+                                function (i, result) {
+                                    const handle = elementType.toJni.call(this, elements[i], env);
+                                    try {
+                                        env.setObjectArrayElement(result, i, s);
+                                    } finally {
+                                        env.deleteLocalRef(handle);
+                                    }
+                                });
                         }
                     };
                     break;
@@ -1885,7 +1877,7 @@
                         isCompatible: function (v) {
                             if (v === null) {
                                 return true;
-                            } else if ((className === 'java.lang.CharSequence' || className === 'java.lang.String') && typeof v === 'string') {
+                            } else if ((signature === 'java.lang.CharSequence' || signature === 'java.lang.String') && typeof v === 'string') {
                                 return true;
                             }
 
@@ -1894,12 +1886,12 @@
                         fromJni: function (h, env) {
                             if (h.isNull()) {
                                 return null;
-                            } else if (className === 'java.lang.String' && unbox) {
+                            } else if (signature === 'java.lang.String' && unbox) {
                                 return env.stringFromJni(h);
                             } else if (this.$handle !== null && env.isSameObject(h, this.$handle)) {
                                 return this;
                             } else {
-                                return factory.cast(h, factory.use(className));
+                                return factory.cast(h, factory.use(signature));
                             }
                         },
                         toJni: function (o, env) {
@@ -1918,6 +1910,35 @@
             }
         }
 
+        /*
+         * http://docs.oracle.com/javase/6/docs/technotes/guides/jni/spec/types.html#wp9502
+         * http://www.liaohuqiu.net/posts/android-object-size-dalvik/
+         */
+        function getTypeFromJniSignature(typeName, className, unbox) {
+            let type = getTypeHelper(typeName, className, unbox);
+            if (!type) {
+                // either a multidimensional array or a non primitive array
+                if (typeName.indexOf("[") === 0) {
+                    type = getTypeHelper('objectArray', typeName.substring(1), unbox);
+                } else if (typeName[0] === "L" && typeName[typeName.length - 1] === ";") {
+                    typeName = typeName.substring(1, typeName.length - 1);
+                    type = getTypeHelper('objectType', typeName, true);
+                } else {
+                    type = getTypeHelper('objectType', typeName, true);
+                }
+            }
+
+            var result = {
+                className: typeName
+            };
+            for (var key in type) {
+                if (type.hasOwnProperty(key)) {
+                    result[key] = type[key];
+                }
+            }
+            return result;
+        }
+
         function fromJniObjectArray(arr, lengthFunc, getObjectArrayElementFunc, convertFromJniFunc, deleteRefFunc) {
             const result = [];
             const length = lengthFunc(arr);
@@ -1932,9 +1953,18 @@
             return result;
         }
 
+        function toJniObjectArray(arr, newObjectArrayFunc, classHandle, setObjectArrayFunc) {
+            const length = arr.length;
+            const result = newObjectArrayFunc(arr, classHandle, NULL);
+            for (let i = 0; i !== arr; i++) {
+                setObjectArrayFunc(i, result);
+            }
+            return result;
+        }
+
         function fromJniPrimitiveArray(arr, typename, getArrayLengthFunc, getArrayElementsFunc, releaseArrayElementsFunc) {
             const result = [];
-            const type = getType(typename);
+            const type = getTypeFromJniSignature(typename);
             const length = getArrayLengthFunc(arr);
             const cArr = getArrayElementsFunc(arr);
             try {
@@ -1957,7 +1987,7 @@
         // we should have Memory.calloc and Memory.free
         function toJniPrimitiveArray(arr, typename, newArrayFunc, setArrayFunc) {
             const length = arr.length;
-            const type = getType(typename);
+            const type = getTypeFromJniSignature(typename);
             const result = newArrayFunc(length);
             const cArray = Memory.alloc(length * type.byteSize);
             for (let i = 0; i < length; i++) {
@@ -1974,7 +2004,7 @@
 
         function isCompatiblePrimitiveArray(v, typename) {
             return typeof v === 'object' && v.hasOwnProperty('length') &&
-                Array.prototype.every.call(v, elem => getType(typename).isCompatible(elem));
+                Array.prototype.every.call(v, elem => getTypeFromJniSignature(typename).isCompatible(elem));
         }
 
         initialize.call(this);
