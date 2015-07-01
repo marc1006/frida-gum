@@ -111,6 +111,12 @@
     const METHOD_OFFSET_INSNS = 32;
     const METHOD_OFFSET_JNI_ARG_INFO = 36;
 
+    // jobject reference types
+    const JNIInvalidRefType = 0;
+    const JNILocalRefType = 1;
+    const JNIGlobalRefType = 2;
+    const JNIWeakGlobalRefType = 3;
+
     Object.defineProperty(this, 'Dalvik', {
         enumerable: true,
         get: function () {
@@ -121,7 +127,7 @@
         }
     });
 
-    const Runtime = function Runtime() {
+    function Runtime() {
         let api = null;
         let vm = null;
         let classFactory = null;
@@ -133,7 +139,7 @@
                 vm = new VM(api);
                 classFactory = new ClassFactory(api, vm);
             }
-        };
+        }
 
         WeakRef.bind(Runtime, function dispose() {
             if (api !== null) {
@@ -373,17 +379,17 @@
         };
 
         initialize.call(this);
-    };
+    }
 
-    const ClassFactory = function ClassFactory(api, vm) {
+    function ClassFactory(api, vm) {
         const factory = this;
         let classes = {};
         let patchedClasses = {};
         let loader = null;
 
-        const initialize = function () {
+        function initialize() {
             api = getApi();
-        };
+        }
 
         this.dispose = function (env) {
             for (let entryId in patchedClasses) {
@@ -633,9 +639,9 @@
                 addMethodsAndFields();
             }
 
-            const dispose = function () {
+            function dispose() {
                 WeakRef.unbind(this.$weakRef);
-            };
+            }
 
             function makeConstructor(classHandle, env) {
                 const Constructor = env.javaLangReflectConstructor();
@@ -686,7 +692,6 @@
                 const Modifier = env.javaLangReflectModifier();
                 const invokeObjectMethodNoArgs = env.method('pointer', []);
                 const invokeIntMethodNoArgs = env.method('int32', []);
-                const invokeUInt8MethodNoArgs = env.method('uint8', []);
 
                 const fieldId = env.fromReflectedField(handle);
                 const fieldType = invokeObjectMethodNoArgs(env.handle, handle, Field.getGenericType);
@@ -704,7 +709,7 @@
                     env.deleteLocalRef(fieldType);
                 }
 
-                const field = createField(jsType, fieldId, jsFieldType, env);
+                const field = createField(name, jsType, fieldId, jsFieldType, env);
 
                 if (field === null)
                     throw new Error("No supported field");
@@ -712,10 +717,8 @@
                 return field;
             }
 
-            function createField(type, fieldId, fieldType, env) {
+            function createField(name, type, fieldId, fieldType, env) {
                 const targetFieldId = fieldId;
-                let originalFieldId = null;
-
                 const rawFieldType = fieldType.type;
                 let invokeTarget = null;
                 if (type === STATIC_FIELD) {
@@ -733,12 +736,7 @@
                     "targetFieldId"
                 ];
 
-
                 let returnCapture, returnStatements;
-                if (rawFieldType === 'void') {
-                    throw new Error("Should not be the case");
-                }
-
                 if (fieldType.fromJni) {
                     frameCapacity++;
                     returnCapture = "rawResult = ";
@@ -753,7 +751,7 @@
                 }
 
                 let getter;
-                eval("getter = function () {" +
+                eval("getter = function get" + name + "() {" +
                         "const isInstance = this.$handle !== null;" +
                         "if (type === INSTANCE_FIELD && isInstance === false) { " +
                             "throw new Error(name + ': cannot get instance field without an instance');" +
@@ -802,7 +800,7 @@
                 }
 
                 let setter;
-                eval("setter = function (value) {" +
+                eval("setter = function set" + name + "(value) {" +
                         "const isInstance = this.$handle !== null;" +
                         "if (type === INSTANCE_FIELD && isInstance === false) { " +
                             "throw new Error(name + ': cannot set an instance field without an instance');" +
@@ -1058,7 +1056,7 @@
                     group.push(m);
                 });
 
-                const f = function () {
+                function f() {
                     const isInstance = this.$handle !== null;
                     if (methods[0].type !== INSTANCE_METHOD && isInstance) {
                         throw new Error(name + ": cannot call static method by way of an instance");
@@ -1079,7 +1077,7 @@
                         }
                     }
                     throw new Error(name + ": argument types do not match any overload");
-                };
+                }
 
                 Object.defineProperty(f, 'overloads', {
                     enumerable: true,
@@ -1311,7 +1309,7 @@
 
                         entry.targetMethods[key] = f;
                     }
-                };
+                }
                 Object.defineProperty(f, 'implementation', {
                     enumerable: true,
                     get: function () {
@@ -1385,7 +1383,7 @@
                 });
 
                 return f;
-            };
+            }
 
             if (superKlass !== null) {
                 const Surrogate = function () {
@@ -1406,11 +1404,11 @@
             env = null;
 
             return klass;
-        };
+        }
 
         function makeHandleDestructor() {
             const handles = Array.prototype.slice.call(arguments).filter(function (h) {
-                return h !== null;
+                return h !== null && !h.isNull();
             });
             return function () {
                 vm.perform(function () {
@@ -1538,7 +1536,7 @@
             });
 
             return new NativeCallback(f, rawRetType, ['pointer', 'pointer'].concat(rawArgTypes));
-        };
+        }
 
         function getTypeHelper(type, signature, unbox) {
             switch (type) {
@@ -1839,18 +1837,17 @@
                             return result;
                         },
                         toJni: function (elements, env) {
-                            let classHandle;
-                            /*if (signature.indexOf("[") === 0) {
-                                if (loader !== null) {
-                                    const klassObj = loader.loadClass(signature);
-                                    classHandle = klassObj.$classHandle;
-                                } else {
-                                    classHandle = env.findClass(signature.replace(/\./g, "/"));
+                            let classHandle, klassObj;
+                            if (loader !== null) {
+                                if (signature[0] === "L" && signature[signature.length - 1] === ";") {
+                                    signature = signature.substring(1, signature.length - 1);
                                 }
-                            } else {*/
-                                const elementClass = factory.use(signature);
-                                classHandle = elementClass.$classHandle;
-                          //  }
+                                klassObj = loader.loadClass(signature);
+                                classHandle = klassObj.$classHandle;
+                            } else {
+                                classHandle = env.findClass(signature.replace(/\./g, "/"));
+                            }
+
                             try {
                                 return toJniObjectArray(elements, env.newObjectArray.bind(env), classHandle,
                                     function (i, result) {
@@ -1858,13 +1855,17 @@
                                         try {
                                             env.setObjectArrayElement(result, i, handle);
                                         } finally {
-                                            // TODO check if handle is local handle
-                                            env.deleteLocalRef(handle);
+                                            if (elementType.type === 'pointer' &&  env.getObjectRefType(handle) === JNILocalRefType) {
+                                                env.deleteLocalRef(handle);
+                                            }
                                         }
                                     });
                             } finally {
-                                // TODO check if handle is local handle
-                                env.deleteLocalRef(classHandle);
+                                if (loader !== null) {
+                                    klassObj = null;
+                                } else {
+                                    env.deleteLocalRef(classHandle);
+                                }
                             }
                         }
                     };
@@ -2007,9 +2008,9 @@
         }
 
         initialize.call(this);
-    };
+    }
 
-    const VM = function VM(api) {
+    function VM(api) {
         let handle = null;
         let attachCurrentThread = null;
         let detachCurrentThread = null;
@@ -2037,7 +2038,7 @@
             attachCurrentThread = new NativeFunction(Memory.readPointer(vtable.add(4 * pointerSize)), 'int32', ['pointer', 'pointer', 'pointer']);
             detachCurrentThread = new NativeFunction(Memory.readPointer(vtable.add(5 * pointerSize)), 'int32', ['pointer']);
             getEnv = new NativeFunction(Memory.readPointer(vtable.add(6 * pointerSize)), 'int32', ['pointer', 'pointer', 'int32']);
-        };
+        }
 
         this.perform = function (fn) {
             let env = this.tryGetEnv();
@@ -2090,7 +2091,7 @@
         };
 
         initialize.call(this);
-    };
+    }
 
     function Env(handle) {
         this.handle = handle;
@@ -2466,19 +2467,19 @@
             return impl(this.handle, length);
         });
 
-        Env.prototype.getBooleanArrayElements = proxy(183, 'pointer', ['pointer', 'pointer', 'pointer'], function (impl, array, index) {
+        Env.prototype.getBooleanArrayElements = proxy(183, 'pointer', ['pointer', 'pointer', 'pointer'], function (impl, array) {
             return impl(this.handle, array, NULL);
         });
 
-        Env.prototype.getByteArrayElements = proxy(184, 'pointer', ['pointer', 'pointer', 'pointer'], function (impl, array, index) {
+        Env.prototype.getByteArrayElements = proxy(184, 'pointer', ['pointer', 'pointer', 'pointer'], function (impl, array) {
             return impl(this.handle, array, NULL);
         });
 
-        Env.prototype.getCharArrayElements = proxy(185, 'pointer', ['pointer', 'pointer', 'pointer'], function (impl, array, index) {
+        Env.prototype.getCharArrayElements = proxy(185, 'pointer', ['pointer', 'pointer', 'pointer'], function (impl, array) {
             return impl(this.handle, array, NULL);
         });
 
-        Env.prototype.getShortArrayElements = proxy(186, 'pointer', ['pointer', 'pointer', 'pointer'], function (impl, array, index) {
+        Env.prototype.getShortArrayElements = proxy(186, 'pointer', ['pointer', 'pointer', 'pointer'], function (impl, array) {
             return impl(this.handle, array, NULL);
         });
 
@@ -2560,6 +2561,10 @@
 
         Env.prototype.setDoubleArrayRegion = proxy(214, 'void', ['pointer', 'pointer', 'int32', 'int32', 'pointer'], function (impl, array, start, length, cArray) {
             impl(this.handle, array, start, length, cArray);
+        });
+
+        Env.prototype.getObjectRefType = proxy(232, 'int32', ['pointer', 'pointer'], function (impl, ref) {
+            return impl(this.handle, ref);
         });
 
         const cachedMethods = {};
@@ -2797,8 +2802,7 @@
         Env.prototype.stringFromJni = function (str) {
             const utf = this.getStringUtfChars(str);
             try {
-                const result = Memory.readUtf8String(utf);
-                return result;
+                return Memory.readUtf8String(utf);
             } finally {
                 this.releaseStringUtfChars(str, utf);
             }
@@ -2934,5 +2938,5 @@
 
     function basename(className) {
         return className.slice(className.lastIndexOf(".") + 1);
-    };
+    }
 }).call(this);
