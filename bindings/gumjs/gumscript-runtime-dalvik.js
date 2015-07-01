@@ -2,6 +2,10 @@
 (function () {
     "use strict";
 
+    const flavor = typeof Process === 'undefined' ? 'kernel' : 'user';
+    if (flavor !== 'user')
+        return;
+
     /*
      * TODO
      *  - JIT... https://github.com/rovo89/Xposed/blob/master/libxposed_dalvik.cpp
