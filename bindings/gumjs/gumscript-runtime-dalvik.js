@@ -674,7 +674,7 @@
                         } finally {
                             env.deleteLocalRef(types);
                         }
-                        jsMethods.push(makeMethod(basename(name), CONSTRUCTOR_METHOD, methodId, jsRetType, jsArgTypes, env));
+                        jsMethods.push(makeMethod.call(this, basename(name), CONSTRUCTOR_METHOD, methodId, jsRetType, jsArgTypes, env));
                     } finally {
                         env.deleteLocalRef(constructor);
                     }
@@ -1283,31 +1283,37 @@
 
                         const vtableSize = vtableCount * pointerSize;
                         const shadowVtable = Memory.alloc(2 * vtableSize);
-                        Memory.copy(shadowVtable, vtable, vtableSize);
-                        Memory.writePointer(vtablePtr, shadowVtable);
+                        if (!vtable.isNull()) {
+                            Memory.copy(shadowVtable, vtable, vtableSize);
+                            Memory.writePointer(vtablePtr, shadowVtable);
 
-                        entry = {
-                            classObject: classObject,
-                            vtablePtr: vtablePtr,
-                            vtableCountPtr: vtableCountPtr,
-                            vtable: vtable,
-                            vtableCount: vtableCount,
-                            shadowVtable: shadowVtable,
-                            shadowVtableCount: vtableCount,
-                            targetMethods: {}
-                        };
-                        patchedClasses[key] = entry;
+                            entry = {
+                                classObject: classObject,
+                                vtablePtr: vtablePtr,
+                                vtableCountPtr: vtableCountPtr,
+                                vtable: vtable,
+                                vtableCount: vtableCount,
+                                shadowVtable: shadowVtable,
+                                shadowVtableCount: vtableCount,
+                                targetMethods: {}
+                            };
+                            patchedClasses[key] = entry;
+                        }
                     }
 
                     key = methodId.toString(16);
-                    let method = entry.targetMethods[key];
-                    if (!method) {
-                        const methodIndex = entry.shadowVtableCount++;
-                        Memory.writePointer(entry.shadowVtable.add(methodIndex * pointerSize), targetMethodId);
-                        Memory.writeU16(targetMethodId.add(METHOD_OFFSET_METHOD_INDEX), methodIndex);
-                        Memory.writeS32(entry.vtableCountPtr, entry.shadowVtableCount);
+                    try {
+                        let method = entry.targetMethods[key];
+                        if (!method) {
+                            const methodIndex = entry.shadowVtableCount++;
+                            Memory.writePointer(entry.shadowVtable.add(methodIndex * pointerSize), targetMethodId);
+                            Memory.writeU16(targetMethodId.add(METHOD_OFFSET_METHOD_INDEX), methodIndex);
+                            Memory.writeS32(entry.vtableCountPtr, entry.shadowVtableCount);
 
-                        entry.targetMethods[key] = f;
+                            entry.targetMethods[key] = f;
+                        }
+                    } catch (e) {
+                        // TODO
                     }
                 }
                 Object.defineProperty(f, 'implementation', {
@@ -1457,7 +1463,7 @@
             } else {
                 if (retType.toJni) {
                     frameCapacity++;
-                    returnCapture = "const result = ";
+                    returnCapture = "result = ";
                     returnStatements = "let rawResult;" +
                         "try {" +
                             "if (retType.isCompatible.call(this, result)) {" +
@@ -1494,6 +1500,7 @@
                         "return;" +
                     "}" +
                     "const self = " + ((type === INSTANCE_METHOD) ? "new C(C.__handle__, thisHandle);" : "new C(thisHandle, null);") +
+                    "let result;" +
                     "try {" +
                         returnCapture + "fn.call(" + ["self"].concat(callArgs).join(", ") + ");" +
                     "} catch (e) {" +
@@ -2800,11 +2807,15 @@
         };
 
         Env.prototype.stringFromJni = function (str) {
-            const utf = this.getStringUtfChars(str);
-            try {
-                return Memory.readUtf8String(utf);
-            } finally {
-                this.releaseStringUtfChars(str, utf);
+            if (!str.isNull()) {
+                const utf = this.getStringUtfChars(str);
+                try {
+                    return Memory.readUtf8String(utf);
+                } finally {
+                    this.releaseStringUtfChars(str, utf);
+                }
+            } else {
+                throw new Error("You are trying to access to a null string.");
             }
         };
     })();
