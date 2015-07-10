@@ -66,6 +66,9 @@
             return _runtime;
         }
     });
+
+    let erstellteGlobalRefs = 0;
+    let delGlobalRef = 0;
     Error.stackTraceLimit = 3; // disables it
     Error.prepareStackTrace = function (error, stack) {
         return stack;
@@ -80,13 +83,13 @@
 
     function registerLocalRef(reference, error) {
         localReferences[reference.toString()] = getTrace(error);
-        console.log("=====================");
+       /* console.log("=====================");
         for (let propName in localReferences) {
             if (localReferences.hasOwnProperty(propName)) {
                 let propValue = localReferences[propName];
                 console.log(propName + ' ' + propValue);
             }
-        }
+        }*/
     }
 
     function unregisterLocalRef(reference) {
@@ -421,6 +424,8 @@
                  "this.$classWrapper = klass;" +
                  "this.$classHandle = env.newGlobalRef(classHandle);" +
                  "this.$handle = (handle !== null) ? env.newGlobalRef(handle) : null;" +
+                 "erstellteGlobalRefs += 1;" +
+                 "console.log(\"Erstellte Klassen \" + erstellteGlobalRefs);" +
                  "this.$weakRef = WeakRef.bind(this, makeHandleDestructor(this.$handle, this.$classHandle));" +
             "};");
 
@@ -1280,6 +1285,8 @@
                 vm.perform(function () {
                     const env = vm.getEnv();
                     handles.forEach(env.deleteGlobalRef, env);
+                    delGlobalRef += 1;
+                    console.log("Klassen freigegeben " + delGlobalRef);
                 });
             };
         }
