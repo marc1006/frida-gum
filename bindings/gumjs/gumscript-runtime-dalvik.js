@@ -79,9 +79,29 @@
         });
     }
 
+    let classesRef = {};
+
+    function registerClasses(name, reference, error) {
+        classesRef[reference.toString()] = name + ' ### ' + getTrace(error);
+        /* console.log("=====================");
+         for (let propName in localReferences) {
+         if (localReferences.hasOwnProperty(propName)) {
+         let propValue = localReferences[propName];
+         console.log(propName + ' ' + propValue);
+         }
+         }*/
+    }
+
+    function unregisterClasses(reference) {
+        delete classesRef[reference.toString()];
+    }
+
     let localReferences = {};
 
     function registerLocalRef(reference, error) {
+        if (reference === undefined) {
+            console.log(getTrace(error));
+        }
         localReferences[reference.toString()] = getTrace(error);
        /* console.log("=====================");
         for (let propName in localReferences) {
@@ -93,6 +113,9 @@
     }
 
     function unregisterLocalRef(reference) {
+        if (reference === undefined) {
+            console.log("unregister\n" + getTrace(error));
+        }
         delete localReferences[reference.toString()];
     }
 
@@ -131,6 +154,19 @@
             enumerable: true,
             get: function () {
                 return localReferences;
+            }
+        });
+
+        Object.defineProperty(this, 'dump', {
+            enumerable: true,
+            get: function () {
+                console.log("=====================");
+                for (let propName in classesRef) {
+                    if (classesRef.hasOwnProperty(propName)) {
+                        let propValue = classesRef[propName];
+                        console.log(propName + ' ' + propValue);
+                    }
+                }
             }
         });
 
@@ -425,8 +461,9 @@
                  "this.$classHandle = env.newGlobalRef(classHandle);" +
                  "this.$handle = (handle !== null) ? env.newGlobalRef(handle) : null;" +
                  "erstellteGlobalRefs += 1;" +
-                 "console.log(\"Erstellte Klassen \" + erstellteGlobalRefs);" +
-                 "this.$weakRef = WeakRef.bind(this, makeHandleDestructor(this.$handle, this.$classHandle));" +
+                  "registerClasses(\""+name+"\", this.$classHandle, new Error());" +
+                 "console.log(\"Erstellte Klassen \" + erstellteGlobalRefs + ' ' + this.$classHandle.toString());" +
+                 "this.$weakRef = WeakRef.bind(this, makeHandleDestructor(this.$classHandle, this.$handle));" +
             "};");
 
             classes[name] = klass;
@@ -612,7 +649,7 @@
                     "const env = vm.getEnv();" +
                     "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
                         "env.exceptionClear();" +
-                        "throw new Error(\"Out of memory\");" +
+                        "throw new Error(\"Out of memory1\");" +
                     "}" +
                     "let result, rawResult;" +
                     "try {" +
@@ -1101,7 +1138,7 @@
                     "const env = vm.getEnv();" +
                     "if (env.pushLocalFrame(" + frameCapacity + ") !== JNI_OK) {" +
                         "env.exceptionClear();" +
-                        "throw new Error(\"Out of memory\");" +
+                        "throw new Error(\"Out of memory2\");" +
                     "}" +
                     "let result, rawResult;" +
                     "try {" +
@@ -1284,6 +1321,7 @@
             return function () {
                 vm.perform(function () {
                     const env = vm.getEnv();
+                    unregisterClasses(handles[0]);
                     handles.forEach(env.deleteGlobalRef, env);
                     delGlobalRef += 1;
                     console.log("Klassen freigegeben " + delGlobalRef);
