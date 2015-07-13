@@ -362,16 +362,11 @@
         this.cast = function (obj, klass) {
             const env = vm.getEnv();
             const handle = obj.hasOwnProperty('$handle') ? obj.$handle : obj;
-            const realClassHandle = env.getObjectClass(handle);
-            try {
-                if (env.isAssignableFrom(realClassHandle, klass.$classHandle)) {
-                    const C = klass.$classWrapper;
-                    return new C(C.__handle__, handle);
-                } else {
-                    throw new Error("Cast from '" + env.getClassName(realClassHandle) + "' to '" + env.getClassName(klass.$classHandle) + "' isn't possible");
-                }
-            } finally {
-                env.deleteLocalRef(realClassHandle);
+            if (env.isInstanceOf(handle, klass.$classHandle)) {
+                const C = klass.$classWrapper;
+                return new C(C.__handle__, handle);
+            } else {
+                throw new Error("Cast from '" + env.getObjectClassName(handle) + "' to '" + env.getClassName(klass.$classHandle) + "' isn't possible");
             }
         };
 
@@ -440,7 +435,7 @@
                 Object.defineProperty(klass.prototype, "$className", {
                     get: function () {
                         const env = vm.getEnv();
-                        return env.getObjectClassName(this);
+                        return this.hasOwnProperty('$handle') ? env.getObjectClassName(this.$handle) : env.getClassName(this.$classHandle);
                     }
                 });
 
@@ -764,8 +759,8 @@
             }
 
             function makeMethodFromOverloads(name, overloads, env) {
-                const Modifier = env.javaLangReflectModifier();
                 const Method = env.javaLangReflectMethod();
+                const Modifier = env.javaLangReflectModifier();
                 const invokeObjectMethodNoArgs = env.method('pointer', []);
                 const invokeIntMethodNoArgs = env.method('int32', []);
                 const invokeUInt8MethodNoArgs = env.method('uint8', []);
@@ -803,7 +798,6 @@
                         env.deleteLocalRef(argTypes);
                         }
                     } catch (e) {
-                        // there was somewhere an exception so we won't use this method
                         return null;
                     }
 
@@ -872,9 +866,7 @@
 
                 function f() {
                     const isInstance = this.$handle !== null;
-                    /*if (methods[0].type !== INSTANCE_METHOD && isInstance) {
-                        throw new Error(name + ": cannot call static method by way of an instance");
-                    } else */if (methods[0].type === INSTANCE_METHOD && !isInstance) {
+                    if (methods[0].type === INSTANCE_METHOD && !isInstance) {
                         if (name === 'toString') {
                             return "<" + this.$classWrapper.__name__ + ">";
                         }
@@ -1080,7 +1072,6 @@
                 });
 
                 let implementation = null;
-
                 function synchronizeVtable(env, instance) {
                     if (originalMethodId === null) {
                         return; // nothing to do – implementation hasn't been replaced
@@ -1131,7 +1122,6 @@
                         entry.targetMethods[key] = f;
                     }
                 }
-
                 Object.defineProperty(f, 'implementation', {
                     enumerable: true,
                     get: function () {
@@ -1565,7 +1555,7 @@
                         throw new Error("The array can't be constructed.");
                     }
 
-                    // we have only to alloc memory if there are array items
+                    // we have to alloc memory only if there are array items
                     if (length > 0) {
                         const cArray = Memory.alloc(length * type.byteSize);
                         for (let i = 0; i < length; i++) {
@@ -2639,6 +2629,15 @@
             }
         };
 
+        Env.prototype.getObjectClassName = function (objHandle) {
+            const jklass = this.getObjectClass(objHandle);
+            try {
+                return this.getClassName(jklass);
+            } finally {
+                this.deleteLocalRef(jklass);
+            }
+        };
+
         Env.prototype.getModifiersString = function (modifiers) {
             const handle = this.staticMethod('pointer', ['int32'])(this.handle, NULL, this.javaLangReflectModifier().toString, modifiers);
             try {
@@ -2659,6 +2658,7 @@
                 }
             }
         };
+
         Env.prototype.getTypeNameFromFirstTypeElement = function (typeArray) {
             const length = this.getArrayLength(typeArray);
             if (length > 0) {
@@ -2673,6 +2673,7 @@
                 return "java.lang.Object";
             }
         };
+
         Env.prototype.getTypeName = function (type, getGenericsInformation) {
             const invokeObjectMethodNoArgs = this.method('pointer', []);
 
@@ -2700,7 +2701,7 @@
                 // const name = invokeObjectMethodNoArgs(this.handle, type, this.javaLangReflectTypeVariable().getName);
                 const bounds = invokeObjectMethodNoArgs(this.handle, type, this.javaLangReflectTypeVariable().getBounds);
                 this.checkForExceptionAndThrowIt();
-                //const D = invokeObjectMethodNoArgs(this.handle, type, this.javaLangReflectTypeVariable().getGenericDeclaration);
+                const D = invokeObjectMethodNoArgs(this.handle, type, this.javaLangReflectTypeVariable().getGenericDeclaration);
                 try {
                  /*   this.stringFromJni(name);
                     const typeParameters = invokeObjectMethodNoArgs(this.handle, D, this.javaLangReflectGenericDeclaration().getTypeParameters);
@@ -2742,6 +2743,8 @@
                 return this.getClassName(type);
             } else if (this.isInstanceOf(type, this.javaLangReflectGenericArrayType().handle)) {
                 const componentType = invokeObjectMethodNoArgs(this.handle, type, this.javaLangReflectGenericArrayType().getGenericComponentType);
+                // check for TypeNotPresentException and MalformedParameterizedTypeException
+                this.checkForExceptionAndThrowIt();
                 try {
                     return "[L" + this.getTypeName(componentType) + ";";
                 } finally {
