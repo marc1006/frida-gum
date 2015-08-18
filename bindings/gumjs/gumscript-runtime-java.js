@@ -2903,6 +2903,10 @@
                     },
                     "_ZN3art6Thread14CurrentFromGdbEv": ["art::Thread::CurrentFromGdb", 'pointer', []],
                     "_ZN3art6mirror6Object5CloneEPNS_6ThreadE": ["art::mirror::Object::Clone", 'pointer', ['pointer', 'pointer']],
+                    "_ZN3art9JavaVMExt22AddWeakGlobalReferenceEPNS_6ThreadEPNS_6mirror6ObjectE": ["art::JavaVMExt::AddWeakGlobalReference", 'pointer', ['pointer', 'pointer']],
+                    "_ZNK3art2gc10accounting11SpaceBitmapILj8EE9HeapBeginEv": ["art::gc::accounting::SpaceBitmap<8u>::HeapBegin", 'pointer', []],
+                    "_ZNK3art2gc10accounting11SpaceBitmapILj8EE9HeapLimitEv": ["art::gc::accounting::SpaceBitmap<8u>::HeapLimit", 'pointer', []]
+                    //"_ZNK3art2gc10accounting11SpaceBitmapILj4096EE9HeapLimitEv": ["art::gc::accounting::SpaceBitmap<8u>::HeapBegin", 'pointer', []]
                 },
                 variables: {
                 }
